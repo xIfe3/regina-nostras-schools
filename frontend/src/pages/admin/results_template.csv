@@ -1,0 +1,4 @@
+studentId,session,term,subject,score,grade,remarks,behavioralScore,teacherComment
+STU001,2023/2024,First Term,Mathematics,85,B,Good performance,80,Well done
+STU001,2023/2024,First Term,English Language,90,A,Excellent work,85,Outstanding
+STU002,2023/2024,First Term,Mathematics,75,C,Fair performance,75,Can do better

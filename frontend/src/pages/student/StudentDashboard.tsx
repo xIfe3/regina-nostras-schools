@@ -1,0 +1,240 @@
+import React, { useState } from "react";
+import { Outlet, Link, useLocation, useNavigate } from "react-router-dom";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  User,
+  FileText,
+  CreditCard,
+  Calendar,
+  Settings,
+  LogOut,
+  Menu,
+  X,
+  Bell,
+  School,
+  Home,
+  GraduationCap,
+} from "lucide-react";
+import { useAuth } from "../../contexts/AuthContext";
+import toast from "react-hot-toast";
+
+const StudentDashboard: React.FC = () => {
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const { user, logout } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  const navigation = [
+    { name: "Dashboard", href: "/student/dashboard", icon: Home },
+    { name: "My Profile", href: "/student/profile", icon: User },
+    { name: "My Results", href: "/student/results", icon: FileText },
+    { name: "Payments", href: "/student/payments", icon: CreditCard },
+    { name: "Academic Calendar", href: "/student/calendar", icon: Calendar },
+    { name: "Settings", href: "/student/settings", icon: Settings },
+  ];
+
+  const handleLogout = () => {
+    logout();
+    toast.success("Logged out successfully");
+    navigate("/login");
+  };
+
+  return (
+    <div className="h-screen flex overflow-hidden bg-gray-100">
+      {/* Mobile sidebar */}
+      <AnimatePresence>
+        {sidebarOpen && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 flex z-40 md:hidden"
+            >
+              <div
+                className="fixed inset-0 bg-gray-600 bg-opacity-75"
+                onClick={() => setSidebarOpen(false)}
+              />
+
+              <motion.div
+                initial={{ x: -300 }}
+                animate={{ x: 0 }}
+                exit={{ x: -300 }}
+                transition={{ type: "spring", damping: 25, stiffness: 200 }}
+                className="relative flex-1 flex flex-col max-w-xs w-full bg-white"
+              >
+                <div className="absolute top-0 right-0 -mr-12 pt-2">
+                  <button
+                    type="button"
+                    className="ml-1 flex items-center justify-center h-10 w-10 rounded-full focus:outline-none focus:ring-2 focus:ring-inset focus:ring-white"
+                    onClick={() => setSidebarOpen(false)}
+                  >
+                    <X className="h-6 w-6 text-white" />
+                  </button>
+                </div>
+
+                <div className="flex-1 h-0 pt-5 pb-4 overflow-y-auto">
+                  <div className="flex-shrink-0 flex items-center px-4">
+                    <School className="h-8 w-8 text-green-600" />
+                    <span className="ml-2 text-xl font-bold text-gray-900">
+                      Regina Nostras
+                    </span>
+                  </div>
+                  <nav className="mt-5 px-2 space-y-1">
+                    {navigation.map((item) => {
+                      const isActive = location.pathname === item.href;
+                      return (
+                        <Link
+                          key={item.name}
+                          to={item.href}
+                          className={`${
+                            isActive
+                              ? "bg-green-100 text-green-900"
+                              : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                          } group flex items-center px-2 py-2 text-base font-medium rounded-md`}
+                          onClick={() => setSidebarOpen(false)}
+                        >
+                          <item.icon
+                            className={`${
+                              isActive ? "text-green-500" : "text-gray-400"
+                            } mr-4 h-6 w-6`}
+                          />
+                          {item.name}
+                        </Link>
+                      );
+                    })}
+                  </nav>
+                </div>
+
+                <div className="flex-shrink-0 flex border-t border-gray-200 p-4">
+                  <div className="flex items-center">
+                    <div className="flex-shrink-0">
+                      <div className="h-10 w-10 rounded-full bg-green-500 flex items-center justify-center">
+                        <span className="text-white font-medium">
+                          {user?.email.charAt(0).toUpperCase()}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="ml-3">
+                      <p className="text-base font-medium text-gray-700">
+                        Student
+                      </p>
+                      <p className="text-sm font-medium text-gray-500 truncate">
+                        {user?.email}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Static sidebar for desktop */}
+      <div className="hidden md:flex md:flex-shrink-0">
+        <div className="flex flex-col w-64">
+          <div className="flex flex-col h-0 flex-1 border-r border-gray-200 bg-white">
+            <div className="flex-1 flex flex-col pt-5 pb-4 overflow-y-auto">
+              <div className="flex items-center flex-shrink-0 px-4">
+                <School className="h-8 w-8 text-green-600" />
+                <span className="ml-2 text-xl font-bold text-gray-900">
+                  Regina Nostras
+                </span>
+              </div>
+              <nav className="mt-5 flex-1 px-2 bg-white space-y-1">
+                {navigation.map((item) => {
+                  const isActive = location.pathname === item.href;
+                  return (
+                    <Link
+                      key={item.name}
+                      to={item.href}
+                      className={`${
+                        isActive
+                          ? "bg-green-100 text-green-900"
+                          : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                      } group flex items-center px-2 py-2 text-sm font-medium rounded-md`}
+                    >
+                      <item.icon
+                        className={`${
+                          isActive ? "text-green-500" : "text-gray-400"
+                        } mr-3 h-6 w-6`}
+                      />
+                      {item.name}
+                    </Link>
+                  );
+                })}
+              </nav>
+            </div>
+
+            <div className="flex-shrink-0 flex border-t border-gray-200 p-4">
+              <div className="flex items-center w-full">
+                <div className="flex-shrink-0">
+                  <div className="h-10 w-10 rounded-full bg-green-500 flex items-center justify-center">
+                    <span className="text-white font-medium">
+                      {user?.email.charAt(0).toUpperCase()}
+                    </span>
+                  </div>
+                </div>
+                <div className="ml-3 flex-1">
+                  <p className="text-sm font-medium text-gray-700">Student</p>
+                  <p className="text-xs font-medium text-gray-500 truncate">
+                    {user?.email.slice(0, 15).concat("...")}
+                  </p>
+                </div>
+                <button
+                  onClick={handleLogout}
+                  className="ml-2 p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-md"
+                  title="Logout"
+                >
+                  <LogOut className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Main content */}
+      <div className="flex flex-col w-0 flex-1 overflow-hidden">
+        {/* Top navigation */}
+        <div className="relative z-10 flex-shrink-0 flex h-16 bg-white shadow">
+          <button
+            type="button"
+            className="px-4 border-r border-gray-200 text-gray-500 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-green-500 md:hidden"
+            onClick={() => setSidebarOpen(true)}
+          >
+            <Menu className="h-6 w-6" />
+          </button>
+
+          <div className="flex-1 px-4 flex justify-between">
+            <div className="flex items-center">
+              <GraduationCap className="h-6 w-6 text-green-600 mr-2" />
+              <h1 className="text-lg font-semibold text-gray-900">
+                Student Portal
+              </h1>
+            </div>
+
+            <div className="ml-4 flex items-center md:ml-6">
+              <button
+                type="button"
+                className="bg-white p-1 rounded-full text-gray-400 hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+              >
+                <Bell className="h-6 w-6" />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Page content */}
+        <main className="flex-1 relative overflow-y-auto focus:outline-none bg-gray-50">
+          <div className="py-6">
+            <Outlet />
+          </div>
+        </main>
+      </div>
+    </div>
+  );
+};
+
+export default StudentDashboard;
