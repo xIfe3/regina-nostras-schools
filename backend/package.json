@@ -4,7 +4,7 @@
   "description": "Backend API for Regina Nostras Schools Student Portal",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
+    "start": "node dist/server.js",
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "test": "jest",
