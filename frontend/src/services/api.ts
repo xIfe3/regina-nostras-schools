@@ -6,7 +6,8 @@ import type { AxiosResponse } from "axios";
  * Uses centralized environment configuration
  */
 const api = axios.create({
-  baseURL: "https://api.reginanostraschools.com/api",
+  baseURL: "https://regina-nostras-schools.onrender.com/api",
+  // baseURL: "https://api.reginanostraschools.com/api",
   // baseURL: "http://localhost:4000/api",
   timeout: 30000,
   headers: {
