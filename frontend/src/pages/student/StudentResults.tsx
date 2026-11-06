@@ -9,7 +9,9 @@ import {
   Award,
   Calendar,
   Eye,
+  Printer,
 } from "lucide-react";
+import { Link } from "react-router-dom";
 import api from "../../services/api";
 import toast from "react-hot-toast";
 
@@ -449,7 +451,7 @@ ${
                 </div>
 
                 {/* Action Buttons */}
-                <div className="flex justify-between items-center">
+                <div className="flex flex-wrap items-center gap-2">
                   <button
                     onClick={() => {
                       setSelectedResult(result);
@@ -460,6 +462,13 @@ ${
                     <Eye className="h-4 w-4 mr-1" />
                     View Details
                   </button>
+                  <Link
+                    to={`/results/sheet/${result._id}`}
+                    className="inline-flex items-center px-3 py-2 border border-[#0C4A9F]/30 text-sm leading-4 font-medium rounded-md text-[#0C4A9F] bg-[#0C4A9F]/5 hover:bg-[#0C4A9F]/10"
+                  >
+                    <Printer className="h-4 w-4 mr-1" />
+                    Report sheet
+                  </Link>
                   <button
                     onClick={() => downloadResult(result)}
                     className="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"

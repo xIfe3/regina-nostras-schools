@@ -2,7 +2,216 @@ import ExcelJS from "exceljs";
 import * as fs from "fs";
 import Student from "../models/Student.js";
 
+/* ------------------------------------------------------------------ */
+/* Generic spreadsheet reading                                         */
+/* ------------------------------------------------------------------ */
+
+export type CellValue = string | number | Date | null;
+
+export interface SheetRow {
+  /** 1-based row number as shown in Excel (header is row 1) */
+  rowNumber: number;
+  /** header text (trimmed) -> value */
+  values: Record<string, CellValue>;
+}
+
+/** Normalise a header for loose matching: "Student ID", "student_id", "studentId" -> "studentid" */
+export const normalizeHeader = (header: string) =>
+  header.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/** Turn any ExcelJS cell value (formula, rich text, hyperlink...) into a plain value */
+const cellToValue = (value: ExcelJS.CellValue): CellValue => {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "number" || typeof value === "string") return value;
+  if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
+  if (value instanceof Date) return value;
+  if (typeof value === "object") {
+    const v = value as any;
+    if ("result" in v) return cellToValue(v.result); // formula / shared formula
+    if (Array.isArray(v.richText))
+      return v.richText.map((t: any) => t.text).join("");
+    if ("text" in v) return cellToValue(v.text); // hyperlink
+    if ("error" in v) return null;
+  }
+  return String(value);
+};
+
+/** Minimal RFC 4180 CSV parser that keeps every value as text (no lost leading zeros). */
+const parseCsv = (content: string): string[][] => {
+  const text = content.replace(/^﻿/, "");
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') {
+          field += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        field += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ",") {
+      row.push(field);
+      field = "";
+    } else if (ch === "\n" || ch === "\r") {
+      if (ch === "\r" && text[i + 1] === "\n") i++;
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = "";
+    } else {
+      field += ch;
+    }
+  }
+  if (field !== "" || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows;
+};
+
+/**
+ * Read the first worksheet of an .xlsx or .csv file into rows keyed by header.
+ * Blank rows are skipped. Throws for unsupported formats.
+ */
+export const readSpreadsheet = async (
+  filePath: string,
+  fileType: string
+): Promise<SheetRow[]> => {
+  const rows: SheetRow[] = [];
+
+  if (fileType === "csv") {
+    const matrix = parseCsv(fs.readFileSync(filePath, "utf8"));
+    if (matrix.length === 0) return rows;
+    const headers = matrix[0].map((h) => h.trim());
+    for (let r = 1; r < matrix.length; r++) {
+      const values: Record<string, CellValue> = {};
+      let hasData = false;
+      headers.forEach((header, c) => {
+        if (!header) return;
+        const raw = (matrix[r][c] ?? "").trim();
+        values[header] = raw === "" ? null : raw;
+        if (raw !== "") hasData = true;
+      });
+      if (hasData) rows.push({ rowNumber: r + 1, values });
+    }
+    return rows;
+  }
+
+  if (fileType === "xlsx") {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(filePath);
+    const worksheet = workbook.worksheets[0];
+    if (!worksheet) return rows;
+
+    const headerRow = worksheet.getRow(1);
+    const headers: Record<number, string> = {};
+    headerRow.eachCell({ includeEmpty: false }, (cell, col) => {
+      const h = String(cellToValue(cell.value) ?? "").trim();
+      if (h) headers[col] = h;
+    });
+
+    worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+      if (rowNumber === 1) return;
+      const values: Record<string, CellValue> = {};
+      let hasData = false;
+      Object.entries(headers).forEach(([col, header]) => {
+        let v = cellToValue(row.getCell(Number(col)).value);
+        if (typeof v === "string") v = v.trim() === "" ? null : v.trim();
+        values[header] = v;
+        if (v !== null) hasData = true;
+      });
+      if (hasData) rows.push({ rowNumber, values });
+    });
+    return rows;
+  }
+
+  if (fileType === "xls") {
+    throw new Error(
+      "Old Excel (.xls) files are not supported. In Excel choose File > Save As > Excel Workbook (.xlsx) or CSV, then upload again."
+    );
+  }
+
+  throw new Error("Unsupported file format. Please upload an .xlsx or .csv file.");
+};
+
+/** Look up a value by any of several header aliases (matching is case/space/underscore-insensitive). */
+export const getField = (
+  row: Record<string, CellValue>,
+  ...aliases: string[]
+): CellValue => {
+  const wanted = aliases.map(normalizeHeader);
+  for (const [header, value] of Object.entries(row)) {
+    if (wanted.includes(normalizeHeader(header)) && value !== null) {
+      return value;
+    }
+  }
+  return null;
+};
+
+export const asText = (value: CellValue): string => {
+  if (value === null || value === undefined) return "";
+  if (value instanceof Date) return value.toISOString().split("T")[0];
+  return String(value).trim();
+};
+
+export const asNumber = (value: CellValue): number | null => {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value === "number") return value;
+  const n = Number(String(value).trim());
+  return Number.isFinite(n) ? n : null;
+};
+
+/**
+ * Parse a date from a cell: Date objects, Excel serial numbers, YYYY-MM-DD,
+ * DD/MM/YYYY (Nigerian/UK format) and YYYY/MM/DD. Returns null if invalid.
+ */
+export const parseDate = (value: CellValue): Date | null => {
+  if (value === null || value === undefined || value === "") return null;
+  if (value instanceof Date) return isNaN(value.getTime()) ? null : value;
+  if (typeof value === "number") {
+    // Excel serial date (days since 1899-12-30)
+    if (value > 20000 && value < 80000) {
+      return new Date(Date.UTC(1899, 11, 30) + value * 86400000);
+    }
+    return null;
+  }
+  const s = String(value).trim();
+  let m = s.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+  if (m) {
+    const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+    return isNaN(d.getTime()) ? null : d;
+  }
+  m = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
+  if (m) {
+    const d = new Date(Date.UTC(+m[3], +m[2] - 1, +m[1]));
+    return isNaN(d.getTime()) ? null : d;
+  }
+  return null;
+};
+
+/** Nigerian phone numbers lose their leading 0 when Excel stores them as numbers. */
+export const normalizePhone = (value: CellValue): string => {
+  const s = asText(value);
+  if (/^[789]\d{9}$/.test(s)) return "0" + s;
+  return s;
+};
+
+/* ------------------------------------------------------------------ */
+/* Results                                                             */
+/* ------------------------------------------------------------------ */
+
 export interface ParsedResultData {
+  rowNumber: number;
   studentId: string;
   academicSession: string;
   term: string;
@@ -15,6 +224,7 @@ export interface ParsedResultData {
       secondCA?: number;
       thirdCA?: number;
       exam: number;
+      total?: number;
     };
   }>;
   attendance?: {
@@ -35,404 +245,582 @@ export interface ParsedResultData {
   nextTermBegins?: Date;
 }
 
-export interface BulkUploadResult {
-  success: ParsedResultData[];
-  errors: Array<{
-    row: number;
-    studentId?: string;
-    error: string;
-  }>;
+export interface BulkUploadError {
+  row: number;
+  studentId?: string;
+  error: string;
 }
 
-// Parse Excel/CSV file for bulk result upload
+export interface BulkUploadResult {
+  success: ParsedResultData[];
+  errors: BulkUploadError[];
+}
+
+const BEHAVIOR_FIELDS = [
+  "punctuality",
+  "neatness",
+  "politeness",
+  "honesty",
+  "leadership",
+  "relationship",
+] as const;
+
+const BEHAVIOR_VALUES = ["excellent", "very good", "good", "fair", "poor"];
+
+/** Columns that are never treated as subjects (normalised header form) */
+const NON_SUBJECT_COLUMNS = new Set(
+  [
+    "studentid",
+    "admissionnumber",
+    "admissionno",
+    "regno",
+    "studentname",
+    "name",
+    "fullname",
+    "firstname",
+    "lastname",
+    "surname",
+    "othernames",
+    "sn",
+    "sno",
+    "serialnumber",
+    "no",
+    "gender",
+    "sex",
+    "age",
+    "academicsession",
+    "session",
+    "term",
+    "class",
+    "classarm",
+    "arm",
+    "schoolopened",
+    "timespresent",
+    "timesabsent",
+    "teachercomments",
+    "teachercomment",
+    "principalcomments",
+    "principalcomment",
+    "nexttermbegins",
+    "total",
+    "average",
+    "position",
+    "grade",
+    ...BEHAVIOR_FIELDS,
+  ].map(normalizeHeader)
+);
+
+/** "First Term", "1st", "1", "FIRST" -> "first" */
+export const normalizeTerm = (value: string): string | null => {
+  const s = value.toLowerCase().replace(/term/g, "").trim();
+  if (["first", "1st", "1"].includes(s)) return "first";
+  if (["second", "2nd", "2"].includes(s)) return "second";
+  if (["third", "3rd", "3"].includes(s)) return "third";
+  return null;
+};
+
+/** "2023-2024", "2023 / 2024" -> "2023/2024" */
+export const normalizeSession = (value: string): string => {
+  const m = value.match(/^\s*(\d{4})\s*[-/]\s*(\d{4})\s*$/);
+  return m ? `${m[1]}/${m[2]}` : value.trim();
+};
+
+const COMPONENT_PATTERN =
+  /^(.*?)[\s_\-:]*(ca1|ca2|ca3|1stca|2ndca|3rdca|firstca|secondca|thirdca|exam|examination)$/i;
+
+const componentKey = (suffix: string): "firstCA" | "secondCA" | "thirdCA" | "exam" => {
+  const s = suffix.toLowerCase();
+  if (["ca1", "1stca", "firstca"].includes(s)) return "firstCA";
+  if (["ca2", "2ndca", "secondca"].includes(s)) return "secondCA";
+  if (["ca3", "3rdca", "thirdca"].includes(s)) return "thirdCA";
+  return "exam";
+};
+
+/**
+ * Parse an uploaded results spreadsheet. One row per student.
+ * Subject columns can be either a single total score per subject ("Mathematics")
+ * or split components ("Mathematics CA1", "Mathematics CA2", "Mathematics Exam").
+ */
 export const parseResultsFile = async (
   filePath: string,
   fileType: string
 ): Promise<BulkUploadResult> => {
-  const result: BulkUploadResult = {
-    success: [],
-    errors: [],
-  };
+  const result: BulkUploadResult = { success: [], errors: [] };
 
+  let rows: SheetRow[];
   try {
-    let jsonData: any[] = [];
+    rows = await readSpreadsheet(filePath, fileType);
+  } catch (error) {
+    result.errors.push({ row: 0, error: (error as Error).message });
+    return result;
+  }
 
-    if (fileType === "xlsx" || fileType === "xls") {
-      const workbook = new ExcelJS.Workbook();
-      await workbook.xlsx.readFile(filePath);
-      const worksheet = workbook.worksheets[0];
+  if (rows.length === 0) {
+    result.errors.push({ row: 0, error: "The file has no data rows." });
+    return result;
+  }
 
-      // Convert worksheet to JSON
-      const rows: any[] = [];
-      worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-        if (rowNumber === 1) return; // Skip header row
-        const rowData: any = {};
-        row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
-          const header =
-            worksheet.getRow(1).getCell(colNumber).value?.toString() ||
-            `Column${colNumber}`;
-          rowData[header] = cell.value;
-        });
-        rows.push(rowData);
-      });
-      jsonData = rows;
-    } else if (fileType === "csv") {
-      const csvData = fs.readFileSync(filePath, "utf8");
-      const workbook = new ExcelJS.Workbook();
-      await workbook.csv.readFile(filePath);
-      const worksheet = workbook.worksheets[0];
+  const seen = new Map<string, number>();
 
-      // Convert worksheet to JSON
-      const rows: any[] = [];
-      worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-        if (rowNumber === 1) return; // Skip header row
-        const rowData: any = {};
-        row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
-          const header =
-            worksheet.getRow(1).getCell(colNumber).value?.toString() ||
-            `Column${colNumber}`;
-          rowData[header] = cell.value;
-        });
-        rows.push(rowData);
-      });
-      jsonData = rows;
-    } else {
-      throw new Error(
-        "Unsupported file format. Please use Excel (.xlsx, .xls) or CSV files."
+  for (const { rowNumber, values: row } of rows) {
+    const studentId = asText(
+      getField(row, "Student ID", "studentId", "Admission Number", "Admission No", "Reg No")
+    ).toUpperCase();
+
+    try {
+      if (!studentId) {
+        result.errors.push({ row: rowNumber, error: "Student ID is required" });
+        continue;
+      }
+
+      const academicSession = normalizeSession(
+        asText(getField(row, "Academic Session", "Session"))
       );
-    }
+      const termRaw = asText(getField(row, "Term"));
+      const className = asText(getField(row, "Class"));
 
-    for (let i = 0; i < jsonData.length; i++) {
-      const row = jsonData[i] as any;
-      const rowNumber = i + 2; // +2 because row 1 is header, and array is 0-indexed
+      if (!academicSession) {
+        result.errors.push({ row: rowNumber, studentId, error: "Academic Session is required (e.g. 2024/2025)" });
+        continue;
+      }
+      if (!/^\d{4}\/\d{4}$/.test(academicSession)) {
+        result.errors.push({ row: rowNumber, studentId, error: `Academic Session "${academicSession}" must look like 2024/2025` });
+        continue;
+      }
+      const term = normalizeTerm(termRaw);
+      if (!term) {
+        result.errors.push({ row: rowNumber, studentId, error: `Term "${termRaw}" must be first, second or third` });
+        continue;
+      }
+      if (!className) {
+        result.errors.push({ row: rowNumber, studentId, error: "Class is required" });
+        continue;
+      }
 
-      try {
-        // Validate required fields
-        if (!row["Student ID"] && !row["student_id"] && !row["studentId"]) {
-          result.errors.push({
-            row: rowNumber,
-            error: "Student ID is required",
-          });
-          continue;
-        }
-
-        // Validate academic session, term, and class
-        const academicSession =
-          row["Academic Session"] ||
-          row["academic_session"] ||
-          row["academicSession"];
-        const term = row["Term"] || row["term"];
-        const className = row["Class"] || row["class"];
-
-        if (!academicSession) {
-          result.errors.push({
-            row: rowNumber,
-            error: "Academic Session is required",
-          });
-          continue;
-        }
-
-        if (!term) {
-          result.errors.push({
-            row: rowNumber,
-            error: "Term is required",
-          });
-          continue;
-        }
-
-        if (!className) {
-          result.errors.push({
-            row: rowNumber,
-            error: "Class is required",
-          });
-          continue;
-        }
-
-        const studentId =
-          row["Student ID"] || row["student_id"] || row["studentId"];
-
-        // Verify student exists
-        const student = await Student.findOne({
-          studentId: studentId.toString(),
-        });
-        if (!student) {
-          result.errors.push({
-            row: rowNumber,
-            studentId: studentId.toString(),
-            error: "Student not found",
-          });
-          continue;
-        }
-
-        // Parse subjects - look for direct subject columns with total scores
-        const subjects: any[] = [];
-        const excludedColumns = [
-          "Student ID",
-          "student_id",
-          "studentId",
-          "Academic Session",
-          "academic_session",
-          "academicSession",
-          "Term",
-          "term",
-          "Class",
-          "class",
-          "School_Opened",
-          "school_opened",
-          "Times_Present",
-          "times_present",
-          "Times_Absent",
-          "times_absent",
-          "punctuality",
-          "neatness",
-          "politeness",
-          "honesty",
-          "leadership",
-          "relationship",
-          "Teacher_Comments",
-          "teacher_comments",
-          "Principal_Comments",
-          "principal_comments",
-          "Next_Term_Begins",
-          "next_term_begins",
-        ];
-
-        // Find subject columns (any column that's not in the excluded list)
-        Object.keys(row).forEach((key) => {
-          const normalizedKey = key.trim();
-
-          // Skip excluded columns and empty keys
-          if (
-            !normalizedKey ||
-            excludedColumns.some(
-              (col) => col.toLowerCase() === normalizedKey.toLowerCase()
-            )
-          ) {
-            return;
-          }
-
-          const score = parseFloat(row[key]);
-
-          // If it's a valid score, treat this column as a subject
-          if (!isNaN(score) && score >= 0 && score <= 100) {
-            subjects.push({
-              subjectName: normalizedKey,
-              scores: {
-                firstCA: 0, // Default CA scores to 0
-                secondCA: 0,
-                thirdCA: 0,
-                exam: 0, // Default exam to 0 since we only have total
-                total: score, // Store the CSV score as the total
-              },
-            });
-          }
-        });
-
-        if (subjects.length === 0) {
-          result.errors.push({
-            row: rowNumber,
-            studentId: studentId.toString(),
-            error:
-              "No valid subjects found. Make sure each subject column has a score between 0-100",
-          });
-          continue;
-        }
-
-        // Parse attendance
-        const attendance = {
-          schoolOpened:
-            parseInt(row["School_Opened"] || row["school_opened"] || "0") || 0,
-          timesPresent:
-            parseInt(row["Times_Present"] || row["times_present"] || "0") || 0,
-          timesAbsent:
-            parseInt(row["Times_Absent"] || row["times_absent"] || "0") || 0,
-        };
-
-        // Parse behavioral assessment
-        const behavioralAssessment: any = {};
-        const behaviorFields = [
-          "punctuality",
-          "neatness",
-          "politeness",
-          "honesty",
-          "leadership",
-          "relationship",
-        ];
-
-        behaviorFields.forEach((field) => {
-          const value =
-            row[field] || row[field.charAt(0).toUpperCase() + field.slice(1)];
-          if (
-            value &&
-            ["excellent", "very good", "good", "fair", "poor"].includes(
-              value.toLowerCase()
-            )
-          ) {
-            behavioralAssessment[field] = value.toLowerCase();
-          }
-        });
-
-        const parsedData: ParsedResultData = {
-          studentId: studentId.toString(),
-          academicSession: academicSession.toString(),
-          term: term.toString(),
-          class: className.toString(),
-          subjects,
-          attendance: attendance.schoolOpened > 0 ? attendance : undefined,
-          behavioralAssessment:
-            Object.keys(behavioralAssessment).length > 0
-              ? behavioralAssessment
-              : undefined,
-          teacherComments:
-            row["Teacher_Comments"] || row["teacher_comments"] || undefined,
-          principalComments:
-            row["Principal_Comments"] || row["principal_comments"] || undefined,
-          nextTermBegins: row["Next_Term_Begins"]
-            ? new Date(row["Next_Term_Begins"])
-            : undefined,
-        };
-
-        result.success.push(parsedData);
-      } catch (error) {
+      const dupKey = `${studentId}|${academicSession}|${term}`;
+      if (seen.has(dupKey)) {
         result.errors.push({
           row: rowNumber,
-          studentId:
-            row["Student ID"] ||
-            row["student_id"] ||
-            row["studentId"] ||
-            "Unknown",
-          error: `Error parsing row: ${(error as Error).message}`,
+          studentId,
+          error: `Duplicate row: this student already appears on row ${seen.get(dupKey)} for the same session and term`,
+        });
+        continue;
+      }
+      seen.set(dupKey, rowNumber);
+
+      const student = await Student.findOne({ studentId });
+      if (!student) {
+        result.errors.push({ row: rowNumber, studentId, error: "No student with this Student ID exists" });
+        continue;
+      }
+
+      // Subjects
+      const totals = new Map<string, number>();
+      const components = new Map<
+        string,
+        { firstCA?: number; secondCA?: number; thirdCA?: number; exam?: number }
+      >();
+      const scoreErrors: string[] = [];
+
+      for (const [header, value] of Object.entries(row)) {
+        const norm = normalizeHeader(header);
+        if (!norm || NON_SUBJECT_COLUMNS.has(norm) || value === null) continue;
+
+        const score = asNumber(value);
+        if (score === null) continue; // e.g. "AB" for absent - subject skipped
+
+        const comp = header.trim().match(COMPONENT_PATTERN);
+        if (comp && comp[1].trim()) {
+          const subject = comp[1].trim();
+          const key = componentKey(comp[2]);
+          const max = key === "exam" ? 70 : 10;
+          if (score < 0 || score > max) {
+            scoreErrors.push(`${header.trim()} = ${score} (must be 0-${max})`);
+            continue;
+          }
+          const entry = components.get(subject) || {};
+          entry[key] = score;
+          components.set(subject, entry);
+        } else {
+          if (score < 0 || score > 100) {
+            scoreErrors.push(`${header.trim()} = ${score} (must be 0-100)`);
+            continue;
+          }
+          totals.set(header.trim(), score);
+        }
+      }
+
+      if (scoreErrors.length > 0) {
+        result.errors.push({ row: rowNumber, studentId, error: `Invalid score: ${scoreErrors.join("; ")}` });
+        continue;
+      }
+
+      const subjects: ParsedResultData["subjects"] = [];
+      for (const [subjectName, c] of components) {
+        const total = (c.firstCA || 0) + (c.secondCA || 0) + (c.thirdCA || 0) + (c.exam || 0);
+        if (total > 100) {
+          scoreErrors.push(`${subjectName} CA + Exam adds up to ${total} (must be 100 or less)`);
+          continue;
+        }
+        subjects.push({
+          subjectName,
+          scores: {
+            firstCA: c.firstCA || 0,
+            secondCA: c.secondCA || 0,
+            thirdCA: c.thirdCA || 0,
+            exam: c.exam || 0,
+            total,
+          },
         });
       }
+      for (const [subjectName, total] of totals) {
+        if (components.has(subjectName)) continue;
+        subjects.push({
+          subjectName,
+          // Only the final score is known (CA/exam breakdown not given)
+          scores: { firstCA: 0, secondCA: 0, thirdCA: 0, exam: 0, total },
+        });
+      }
+
+      if (scoreErrors.length > 0) {
+        result.errors.push({ row: rowNumber, studentId, error: scoreErrors.join("; ") });
+        continue;
+      }
+      if (subjects.length === 0) {
+        result.errors.push({
+          row: rowNumber,
+          studentId,
+          error: "No subject scores found. Add one column per subject with a score from 0 to 100.",
+        });
+        continue;
+      }
+
+      // Attendance
+      const schoolOpened = asNumber(getField(row, "School_Opened", "School Opened")) || 0;
+      const timesPresent = asNumber(getField(row, "Times_Present", "Times Present")) || 0;
+      const timesAbsentRaw = asNumber(getField(row, "Times_Absent", "Times Absent"));
+      const timesAbsent =
+        timesAbsentRaw !== null ? timesAbsentRaw : Math.max(schoolOpened - timesPresent, 0);
+
+      // Behaviour
+      const behavioralAssessment: Record<string, string> = {};
+      for (const field of BEHAVIOR_FIELDS) {
+        const v = asText(getField(row, field)).toLowerCase();
+        if (BEHAVIOR_VALUES.includes(v)) behavioralAssessment[field] = v;
+      }
+
+      result.success.push({
+        rowNumber,
+        studentId,
+        academicSession,
+        term,
+        class: className,
+        subjects,
+        attendance: schoolOpened > 0 ? { schoolOpened, timesPresent, timesAbsent } : undefined,
+        behavioralAssessment:
+          Object.keys(behavioralAssessment).length > 0 ? behavioralAssessment : undefined,
+        teacherComments:
+          asText(getField(row, "Teacher_Comments", "Teacher Comment", "Teacher Comments")) || undefined,
+        principalComments:
+          asText(getField(row, "Principal_Comments", "Principal Comment", "Principal Comments")) ||
+          undefined,
+        nextTermBegins: parseDate(getField(row, "Next_Term_Begins", "Next Term Begins")) || undefined,
+      });
+    } catch (error) {
+      result.errors.push({
+        row: rowNumber,
+        studentId: studentId || "Unknown",
+        error: `Error reading row: ${(error as Error).message}`,
+      });
     }
-  } catch (error) {
-    result.errors.push({
-      row: 0,
-      error: `Error reading file: ${(error as Error).message}`,
-    });
   }
 
   return result;
 };
 
-// Generate a template Excel file for bulk upload
-export const generateResultsTemplate = async (): Promise<Buffer> => {
-  const sampleData = [
-    {
-      "Student ID": "RNS2024ABC123",
-      "Academic Session": "2023/2024",
-      Term: "first",
-      Class: "JSS 1A",
-      Mathematics: 85,
-      English: 78,
-      Science: 92,
-      Computer: 88,
-      "Social Studies": 75,
-      French: 70,
-      Art: 80,
-      Music: 85,
-      "Physical Education": 90,
-      School_Opened: 90,
-      Times_Present: 88,
-      Times_Absent: 2,
-      punctuality: "excellent",
-      neatness: "very good",
-      politeness: "excellent",
-      honesty: "excellent",
-      leadership: "good",
-      relationship: "very good",
-      Teacher_Comments: "Good performance overall. Keep it up!",
-      Principal_Comments: "Well done. Continue to work hard.",
-      Next_Term_Begins: "2024-09-15",
-    },
-    {
-      "Student ID": "RNS2024ABC124",
-      "Academic Session": "2023/2024",
-      Term: "first",
-      Class: "JSS 1A",
-      Mathematics: 75,
-      English: 82,
-      Science: 78,
-      Computer: 90,
-      "Social Studies": 85,
-      French: 68,
-      Art: 75,
-      Music: 82,
-      "Physical Education": 88,
-      School_Opened: 90,
-      Times_Present: 85,
-      Times_Absent: 5,
-      punctuality: "good",
-      neatness: "excellent",
-      politeness: "good",
-      honesty: "very good",
-      leadership: "excellent",
-      relationship: "good",
-      Teacher_Comments: "Shows improvement in all areas.",
-      Principal_Comments: "Excellent progress this term.",
-      Next_Term_Begins: "2024-09-15",
-    },
-  ];
+/* ------------------------------------------------------------------ */
+/* Templates                                                           */
+/* ------------------------------------------------------------------ */
 
-  const workbook = new ExcelJS.Workbook();
-  const worksheet = workbook.addWorksheet("Results Template");
+export const DEFAULT_SUBJECTS = [
+  "Mathematics",
+  "English",
+  "Basic Science",
+  "Basic Technology",
+  "Social Studies",
+  "Civic Education",
+  "Computer Studies",
+  "CRS",
+  "Agricultural Science",
+  "French",
+];
 
-  // Add headers
-  const headers = Object.keys(sampleData[0]);
-  worksheet.addRow(headers);
+const RESULT_EXTRA_COLUMNS = [
+  "School_Opened",
+  "Times_Present",
+  "Times_Absent",
+  ...BEHAVIOR_FIELDS,
+  "Teacher_Comments",
+  "Principal_Comments",
+  "Next_Term_Begins",
+];
 
-  // Add sample data
-  sampleData.forEach((row) => {
-    const values = headers.map((header) => row[header as keyof typeof row]);
-    worksheet.addRow(values);
-  });
+const csvEscape = (value: unknown) => {
+  const s = value === null || value === undefined ? "" : String(value);
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
 
-  // Add instructions sheet
-  const instructionSheet = workbook.addWorksheet("Instructions");
+export const toCsv = (rows: unknown[][]) =>
+  // BOM so Excel opens UTF-8 names correctly
+  "﻿" + rows.map((r) => r.map(csvEscape).join(",")).join("\r\n") + "\r\n";
 
-  const instructions = [
-    ["INSTRUCTIONS FOR BULK RESULT UPLOAD"],
-    [""],
-    ["REQUIRED COLUMNS:"],
-    ["1. Student ID: Must match existing student IDs in the system"],
-    ["2. Academic Session: e.g., 2023/2024, 2024/2025"],
-    ["3. Term: first, second, or third"],
-    ["4. Class: e.g., JSS 1A, SSS 2B, Nursery 1"],
+/**
+ * Results template as CSV. When students are given, one row per student is
+ * pre-filled with ID, name, session, term and class so teachers only type scores.
+ */
+export const generateResultsTemplateCsv = (options: {
+  students?: Array<{ studentId: string; name: string; className: string }>;
+  academicSession?: string;
+  term?: string;
+  subjects?: string[];
+}): string => {
+  const subjects = options.subjects && options.subjects.length > 0 ? options.subjects : DEFAULT_SUBJECTS;
+  const header = ["Student ID", "Student Name", "Academic Session", "Term", "Class", ...subjects, ...RESULT_EXTRA_COLUMNS];
+
+  const rows: unknown[][] = [header];
+
+  if (options.students && options.students.length > 0) {
+    for (const s of options.students) {
+      rows.push([
+        s.studentId,
+        s.name,
+        options.academicSession || "",
+        options.term || "",
+        s.className,
+        ...subjects.map(() => ""),
+        ...RESULT_EXTRA_COLUMNS.map(() => ""),
+      ]);
+    }
+  } else {
+    rows.push([
+      "RNS2025ABC123",
+      "Ada Okafor",
+      options.academicSession || "2024/2025",
+      options.term || "first",
+      "JSS 1",
+      ...subjects.map((_, i) => 60 + ((i * 7) % 35)),
+      90,
+      88,
+      2,
+      "excellent",
+      "very good",
+      "excellent",
+      "excellent",
+      "good",
+      "very good",
+      "Good performance overall. Keep it up!",
+      "Well done.",
+      "2025-01-13",
+    ]);
+  }
+
+  return toCsv(rows);
+};
+
+export const STUDENT_TEMPLATE_HEADERS = [
+  "firstName",
+  "lastName",
+  "middleName",
+  "email",
+  "phoneNumber",
+  "currentClass",
+  "classArm",
+  "dateOfBirth",
+  "gender",
+  "stateOfOrigin",
+  "localGovernmentArea",
+  "street",
+  "city",
+  "state",
+  "parentName",
+  "parentPhone",
+  "parentEmail",
+];
+
+export const generateStudentsTemplateCsv = (): string =>
+  toCsv([
+    STUDENT_TEMPLATE_HEADERS,
     [
-      "5. Subject Scores: Each subject should have one column with the final total score (0-100)",
+      "John",
+      "Doe",
+      "",
+      "john.doe@email.com",
+      "08012345678",
+      "JSS 1",
+      "A",
+      "2012-01-15",
+      "male",
+      "Lagos",
+      "Ikeja",
+      "12 Allen Avenue",
+      "Ikeja",
+      "Lagos",
+      "Mr. Doe",
+      "08098765432",
+      "parent@email.com",
     ],
-    [""],
-    ["OPTIONAL COLUMNS:"],
-    ["6. Attendance: School_Opened, Times_Present, Times_Absent (all numbers)"],
-    [
-      "7. Behavioral Assessment: Use lowercase values: excellent, very good, good, fair, poor",
-    ],
-    ["8. Comments: Teacher_Comments and Principal_Comments are optional"],
-    ["9. Next_Term_Begins: Use format YYYY-MM-DD"],
-    [""],
-    ["SUBJECT EXAMPLES:"],
-    [
-      "Mathematics, English, Science, Computer, Social Studies, French, Art, Music, Physical Education",
-    ],
-    [""],
-    ["IMPORTANT NOTES:"],
-    [
-      "- All students in the same upload should have the same Academic Session, Term, and Class",
-    ],
-    [
-      "- Score Range: All subject scores should be between 0-100 (final term total)",
-    ],
-    ["- Student IDs must already exist in the system"],
-    ["- Each row represents one student's complete results for the term"],
-    ["- Add/remove subject columns as needed for your school"],
-    ["- Maximum file size: 10MB"],
-  ];
+  ]);
 
-  instructions.forEach((row) => {
-    instructionSheet.addRow(row);
-  });
+/* ------------------------------------------------------------------ */
+/* Students                                                            */
+/* ------------------------------------------------------------------ */
 
-  // Convert to buffer and return
-  const arrayBuffer = await workbook.xlsx.writeBuffer();
-  return Buffer.from(arrayBuffer);
+export interface ParsedStudentRow {
+  rowNumber: number;
+  studentData: any;
+}
+
+/**
+ * Parse a student bulk-upload spreadsheet into Student documents (without userId).
+ * Required: firstName, lastName, email, currentClass, dateOfBirth, gender.
+ */
+export const parseStudentsFile = async (
+  filePath: string,
+  fileType: string
+): Promise<{ success: ParsedStudentRow[]; errors: BulkUploadError[] }> => {
+  const out = { success: [] as ParsedStudentRow[], errors: [] as BulkUploadError[] };
+
+  let rows: SheetRow[];
+  try {
+    rows = await readSpreadsheet(filePath, fileType);
+  } catch (error) {
+    out.errors.push({ row: 0, error: (error as Error).message });
+    return out;
+  }
+  if (rows.length === 0) {
+    out.errors.push({ row: 0, error: "The file has no data rows." });
+    return out;
+  }
+
+  const seenEmails = new Map<string, number>();
+
+  for (const { rowNumber, values: row } of rows) {
+    const firstName = asText(getField(row, "firstName", "First Name"));
+    const lastName = asText(getField(row, "lastName", "Last Name", "Surname"));
+    const email = asText(getField(row, "email", "Student Email")).toLowerCase();
+    const label = email || `${firstName} ${lastName}`.trim() || undefined;
+
+    const missing: string[] = [];
+    if (!firstName) missing.push("firstName");
+    if (!lastName) missing.push("lastName");
+    if (!email) missing.push("email");
+    const currentClass = asText(getField(row, "currentClass", "Class"));
+    if (!currentClass) missing.push("currentClass");
+    const dobRaw = getField(row, "dateOfBirth", "Date of Birth", "DOB");
+    if (dobRaw === null) missing.push("dateOfBirth");
+    const genderRaw = asText(getField(row, "gender", "Sex")).toLowerCase();
+    if (!genderRaw) missing.push("gender");
+
+    if (missing.length > 0) {
+      out.errors.push({ row: rowNumber, studentId: label, error: `Missing required: ${missing.join(", ")}` });
+      continue;
+    }
+
+    if (!/^\S+@\S+\.\S+$/.test(email)) {
+      out.errors.push({ row: rowNumber, studentId: label, error: `Invalid email "${email}"` });
+      continue;
+    }
+    if (seenEmails.has(email)) {
+      out.errors.push({
+        row: rowNumber,
+        studentId: label,
+        error: `Email already used on row ${seenEmails.get(email)} of this file`,
+      });
+      continue;
+    }
+    seenEmails.set(email, rowNumber);
+
+    const dateOfBirth = parseDate(dobRaw);
+    if (!dateOfBirth) {
+      out.errors.push({ row: rowNumber, studentId: label, error: `Invalid dateOfBirth "${asText(dobRaw)}" (use YYYY-MM-DD)` });
+      continue;
+    }
+
+    const gender = ["m", "male", "boy"].includes(genderRaw)
+      ? "male"
+      : ["f", "female", "girl"].includes(genderRaw)
+      ? "female"
+      : null;
+    if (!gender) {
+      out.errors.push({ row: rowNumber, studentId: label, error: `Gender "${genderRaw}" must be male or female` });
+      continue;
+    }
+
+    const parentName = asText(getField(row, "parentName", "Parent Name", "Guardian Name"));
+    const parentPhone = normalizePhone(getField(row, "parentPhone", "Parent Phone", "Guardian Phone"));
+    const parentEmail = asText(getField(row, "parentEmail", "Parent Email", "Guardian Email")).toLowerCase();
+    if (parentEmail && !/^\S+@\S+\.\S+$/.test(parentEmail)) {
+      out.errors.push({ row: rowNumber, studentId: label, error: `Invalid parentEmail "${parentEmail}"` });
+      continue;
+    }
+
+    const stateOfOrigin = asText(getField(row, "stateOfOrigin", "State of Origin")) || "Not provided";
+    const street =
+      asText(getField(row, "street", "address", "Home Address")) || "Not provided";
+    const state = asText(getField(row, "state")) || stateOfOrigin;
+
+    out.success.push({
+      rowNumber,
+      studentData: {
+        personalInfo: {
+          firstName,
+          lastName,
+          middleName: asText(getField(row, "middleName", "Middle Name", "Other Names")) || undefined,
+          dateOfBirth,
+          gender,
+          nationality: asText(getField(row, "nationality")) || "Nigerian",
+          stateOfOrigin,
+          localGovernmentArea:
+            asText(getField(row, "localGovernmentArea", "LGA")) || "Not provided",
+          religion: asText(getField(row, "religion")) || undefined,
+        },
+        contactInfo: {
+          email,
+          phoneNumber: normalizePhone(getField(row, "phoneNumber", "Phone")) || undefined,
+          address: {
+            street,
+            city: asText(getField(row, "city")) || state,
+            state,
+            country: "Nigeria",
+          },
+        },
+        parentGuardianInfo: {
+          guardian: {
+            name: parentName,
+            relationship: "Parent/Guardian",
+            occupation: "",
+            phoneNumber: parentPhone,
+            email: parentEmail,
+          },
+        },
+        academicInfo: {
+          currentClass,
+          classArm: asText(getField(row, "classArm", "Arm")) || undefined,
+          admissionDate:
+            parseDate(getField(row, "admissionDate", "Admission Date")) || new Date(),
+          status: "active",
+        },
+        medicalInfo: {
+          allergies: [],
+          emergencyContact: {
+            name: parentName,
+            relationship: "Parent/Guardian",
+            phoneNumber: parentPhone,
+          },
+        },
+      },
+    });
+  }
+
+  return out;
 };

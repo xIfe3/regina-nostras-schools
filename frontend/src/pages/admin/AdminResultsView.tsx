@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import api from "../../services/api";
 import toast from "react-hot-toast";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 interface Student {
   _id: string;
@@ -107,9 +107,18 @@ const AdminResultsView: React.FC = () => {
   const [stats, setStats] = useState<ResultStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
-  const [classFilter, setClassFilter] = useState("all");
-  const [sessionFilter, setSessionFilter] = useState("all");
-  const [termFilter, setTermFilter] = useState("all");
+  const [searchParams] = useSearchParams();
+  const [classFilter, setClassFilter] = useState(searchParams.get("class") || "all");
+  const [sessionFilter, setSessionFilter] = useState(searchParams.get("session") || "all");
+  const [termFilter, setTermFilter] = useState(searchParams.get("term") || "all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "published" | "draft">(
+    (["published", "draft"].includes(searchParams.get("status") || "")
+      ? searchParams.get("status")
+      : "all") as "all" | "published" | "draft"
+  );
+  const [busyIds, setBusyIds] = useState<string[]>([]);
+  const [confirmPublishAll, setConfirmPublishAll] = useState(false);
+  const [publishingAll, setPublishingAll] = useState(false);
   const [selectedResult, setSelectedResult] = useState<Result | null>(null);
   const [showResultModal, setShowResultModal] = useState(false);
   const [showStatsModal, setShowStatsModal] = useState(false);
@@ -162,7 +171,7 @@ const AdminResultsView: React.FC = () => {
       setLoading(true);
 
       const queryParams = new URLSearchParams();
-      queryParams.append("limit", "50"); // Get more results initially
+      queryParams.append("limit", "1000");
 
       if (sessionFilter !== "all") {
         queryParams.append("academicSession", sessionFilter);
@@ -183,6 +192,12 @@ const AdminResultsView: React.FC = () => {
           response.data.data[0]?.studentId
         );
         setResults(response.data.data);
+        const resultClasses = (response.data.data as Result[])
+          .map((r) => r.class)
+          .filter(Boolean);
+        setAvailableClasses((prev) =>
+          Array.from(new Set([...prev, ...resultClasses])).sort()
+        );
       } else {
         throw new Error(response.data.message || "Failed to fetch results");
       }
@@ -234,8 +249,6 @@ const AdminResultsView: React.FC = () => {
   };
 
   const filteredResults = results.filter((result) => {
-    console.log("Filtered Result: ", result);
-
     // Check if studentId is properly populated
     if (!result.studentId || typeof result.studentId === "string") {
       console.warn("Student not populated or invalid:", result.studentId);
@@ -250,18 +263,21 @@ const AdminResultsView: React.FC = () => {
       student.personalInfo?.lastName?.toLowerCase().includes(searchLower) ||
       student.studentId?.toLowerCase().includes(searchLower);
 
-    const matchesClass =
-      classFilter === "all" ||
-      student.academicInfo?.currentClass?.includes(classFilter);
+    const matchesClass = classFilter === "all" || result.class === classFilter;
+    const matchesStatus =
+      statusFilter === "all" ||
+      (statusFilter === "published" ? result.isPublished : !result.isPublished);
     const matchesSession =
       sessionFilter === "all" || result.academicSession === sessionFilter;
     const matchesTerm = termFilter === "all" || result.term === termFilter;
 
-    return matchesSearch && matchesClass && matchesSession && matchesTerm;
+    return (
+      matchesSearch && matchesClass && matchesSession && matchesTerm && matchesStatus
+    );
   });
 
   const getGradeColor = (grade: string) => {
-    switch (grade) {
+    switch (grade.charAt(0)) {
       case "A":
         return "text-emerald-700 bg-emerald-100";
       case "B":
@@ -287,7 +303,38 @@ const AdminResultsView: React.FC = () => {
   };
 
   const exportResults = () => {
-    toast.success("Results exported successfully");
+    if (filteredResults.length === 0) {
+      toast.error("No results to export");
+      return;
+    }
+    const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const rows = [
+      ["Student ID", "Name", "Class", "Session", "Term", "Subjects", "Total", "Average", "Grade", "Position", "Out of", "Status"],
+      ...filteredResults.map((r) => [
+        r.studentId?.studentId,
+        `${r.studentId?.personalInfo?.firstName || ""} ${r.studentId?.personalInfo?.lastName || ""}`.trim(),
+        r.class,
+        r.academicSession,
+        r.term,
+        r.subjects.length,
+        r.summary.totalScore,
+        r.summary.averageScore,
+        r.summary.overallGrade,
+        r.summary.position,
+        r.summary.totalStudents,
+        r.isPublished ? "Published" : "Draft",
+      ]),
+    ];
+    const blob = new Blob([rows.map((row) => row.map(esc).join(",")).join("\n")], {
+      type: "text/csv",
+    });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `results_${new Date().toISOString().split("T")[0]}.csv`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+    toast.success(`${filteredResults.length} result(s) exported`);
   };
 
   const generateResultSheet = async (result: Result) => {
@@ -346,6 +393,50 @@ const AdminResultsView: React.FC = () => {
       toast.error(
         error.response?.data?.message || "Failed to send notification"
       );
+    }
+  };
+
+  const setPublishedLocally = (ids: string[], isPublished: boolean) =>
+    setResults((prev) =>
+      prev.map((r) => (ids.includes(r._id) ? { ...r, isPublished } : r))
+    );
+
+  const togglePublish = async (result: Result) => {
+    const next = !result.isPublished;
+    setBusyIds((b) => [...b, result._id]);
+    try {
+      await api.put(`/results/${result._id}/publish`, { isPublished: next });
+      setPublishedLocally([result._id], next);
+      toast.success(
+        next
+          ? "Published. Student and parent are being emailed."
+          : "Result hidden from student and parent"
+      );
+    } catch (error: any) {
+      toast.error(error?.message || "Could not update result");
+    } finally {
+      setBusyIds((b) => b.filter((id) => id !== result._id));
+    }
+  };
+
+  const draftsShown = filteredResults.filter((r) => !r.isPublished);
+
+  const publishAllShown = async () => {
+    const ids = draftsShown.map((r) => r._id);
+    if (ids.length === 0) return;
+    setPublishingAll(true);
+    setConfirmPublishAll(false);
+    try {
+      const res = await api.post("/results/publish", {
+        resultIds: ids,
+        isPublished: true,
+      });
+      setPublishedLocally(ids, true);
+      toast.success(res.data.message || `${ids.length} results published`);
+    } catch (error: any) {
+      toast.error(error?.message || "Could not publish results");
+    } finally {
+      setPublishingAll(false);
     }
   };
 
@@ -438,164 +529,94 @@ const AdminResultsView: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 flex items-center justify-center">
+      <div className="flex items-center justify-center h-64">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading results...</p>
+          <div className="animate-spin rounded-full h-10 w-10 border-2 border-slate-200 border-t-[#0C4A9F] mx-auto mb-3"></div>
+          <p className="text-sm text-slate-500">Loading results...</p>
         </div>
       </div>
     );
   }
 
+  const shownCount = filteredResults.length;
+  const shownAverage =
+    shownCount > 0
+      ? filteredResults.reduce((sum, r) => sum + (r.summary?.averageScore || 0), 0) /
+        shownCount
+      : 0;
+  const shownPassRate =
+    shownCount > 0
+      ? (filteredResults.filter((r) => (r.summary?.averageScore || 0) >= 50).length /
+          shownCount) *
+        100
+      : 0;
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
+    <div className="px-4 sm:px-6 lg:px-8 pb-8">
       {/* Header */}
-      <div className="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 px-4 sm:px-6 lg:px-8 py-8">
-        <div className="max-w-7xl mx-auto">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="flex items-center mb-4">
-                <div className="p-3 bg-white/20 backdrop-blur-sm rounded-xl mr-4">
-                  <GraduationCap className="h-8 w-8 text-white" />
-                </div>
-                <div>
-                  <h1 className="text-3xl font-bold text-white">
-                    Results Management
-                  </h1>
-                  <p className="text-indigo-100">
-                    View and manage student academic results
-                  </p>
-                </div>
-              </div>
-            </div>
-            <div className="flex items-center space-x-3">
-              <button
-                onClick={() => setShowStatsModal(true)}
-                className="bg-white/20 backdrop-blur-sm border border-white/30 rounded-xl px-4 py-2 text-white hover:bg-white/30 transition-colors flex items-center"
-              >
-                <BarChart3 className="h-4 w-4 mr-2" />
-                Analytics
-              </button>
-              <button
-                onClick={exportResults}
-                className="bg-white/20 backdrop-blur-sm border border-white/30 rounded-xl px-4 py-2 text-white hover:bg-white/30 transition-colors flex items-center"
-              >
-                <Download className="h-4 w-4 mr-2" />
-                Export
-              </button>
-              <button
-                onClick={() => navigate("/admin/results")}
-                className="bg-white/20 backdrop-blur-sm border border-white/30 rounded-xl px-4 py-2 text-white hover:bg-white/30 transition-colors flex items-center"
-              >
-                <Upload className="h-4 w-4 mr-2" />
-                Upload Results
-              </button>
-            </div>
-          </div>
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-semibold tracking-tight text-slate-900">
+            Results
+          </h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Review uploaded results and publish them to students and parents.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => setShowStatsModal(true)}
+            disabled={sessionFilter === "all" || termFilter === "all"}
+            title={
+              sessionFilter === "all" || termFilter === "all"
+                ? "Choose a session and term to see class analytics"
+                : "Class analytics"
+            }
+            className="inline-flex items-center rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <BarChart3 className="h-4 w-4 mr-2" />
+            Analytics
+          </button>
+          <button
+            onClick={exportResults}
+            className="inline-flex items-center rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            <Download className="h-4 w-4 mr-2" />
+            Export CSV
+          </button>
+          <button
+            onClick={() => navigate("/admin/results")}
+            className="inline-flex items-center rounded-md bg-[#0C4A9F] px-3 py-2 text-sm font-medium text-white hover:bg-[#0A2F66]"
+          >
+            <Upload className="h-4 w-4 mr-2" />
+            Upload Results
+          </button>
         </div>
       </div>
 
-      <div className="px-4 sm:px-6 lg:px-8 -mt-4 relative z-10 pb-8">
-        {/* Quick Stats */}
-        {stats && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="bg-white/90 backdrop-blur-sm border border-white/30 rounded-2xl p-6 shadow-xl"
-            >
-              <div className="flex items-center justify-between mb-4">
-                <div className="p-3 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 shadow-lg">
-                  <FileText className="h-6 w-6 text-white" />
-                </div>
-                <TrendingUp className="h-5 w-5 text-blue-500" />
+      <div>
+        {/* Summary of what is shown */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          {[
+            { label: "Results shown", value: shownCount.toLocaleString(), icon: FileText, tone: "bg-[#0C4A9F]/10 text-[#0C4A9F]" },
+            { label: "Average score", value: `${shownAverage.toFixed(1)}%`, icon: Target, tone: "bg-emerald-50 text-emerald-700" },
+            { label: "Pass rate (50%+)", value: `${shownPassRate.toFixed(0)}%`, icon: Award, tone: "bg-[#C4A356]/15 text-[#8a6d2b]" },
+            { label: "Drafts (not visible)", value: draftsShown.length.toLocaleString(), icon: XCircle, tone: "bg-amber-50 text-amber-700" },
+          ].map((c) => (
+            <div key={c.label} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-slate-500">{c.label}</p>
+                <span className={`rounded-lg p-1.5 ${c.tone}`}>
+                  <c.icon className="h-4 w-4" />
+                </span>
               </div>
-              <div>
-                <p className="text-sm font-medium text-gray-600 mb-1">
-                  Total Results
-                </p>
-                <p className="text-2xl font-bold text-gray-900">
-                  {stats.totalStudents}
-                </p>
-              </div>
-            </motion.div>
-
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.1 }}
-              className="bg-white/90 backdrop-blur-sm border border-white/30 rounded-2xl p-6 shadow-xl"
-            >
-              <div className="flex items-center justify-between mb-4">
-                <div className="p-3 rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-600 shadow-lg">
-                  <Target className="h-6 w-6 text-white" />
-                </div>
-              </div>
-              <div>
-                <p className="text-sm font-medium text-gray-600 mb-1">
-                  Average Score
-                </p>
-                <p className="text-2xl font-bold text-gray-900">
-                  {stats.classAverage.toFixed(1)}%
-                </p>
-              </div>
-            </motion.div>
-
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.2 }}
-              className="bg-white/90 backdrop-blur-sm border border-white/30 rounded-2xl p-6 shadow-xl"
-            >
-              <div className="flex items-center justify-between mb-4">
-                <div className="p-3 rounded-xl bg-gradient-to-br from-purple-500 to-purple-600 shadow-lg">
-                  <CheckCircle className="h-6 w-6 text-white" />
-                </div>
-              </div>
-              <div>
-                <p className="text-sm font-medium text-gray-600 mb-1">
-                  Pass Rate
-                </p>
-                <p className="text-2xl font-bold text-gray-900">
-                  {stats.totalStudents > 0
-                    ? (
-                        ((stats.totalStudents -
-                          (stats.gradeDistribution["F9"] || 0)) /
-                          stats.totalStudents) *
-                        100
-                      ).toFixed(1) + "%"
-                    : "0%"}
-                </p>
-              </div>
-            </motion.div>
-
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.3 }}
-              className="bg-white/90 backdrop-blur-sm border border-white/30 rounded-2xl p-6 shadow-xl"
-            >
-              <div className="flex items-center justify-between mb-4">
-                <div className="p-3 rounded-xl bg-gradient-to-br from-amber-500 to-amber-600 shadow-lg">
-                  <Award className="h-6 w-6 text-white" />
-                </div>
-              </div>
-              <div>
-                <p className="text-sm font-medium text-gray-600 mb-1">
-                  Top Performer
-                </p>
-                <p className="text-sm font-bold text-gray-900">
-                  {stats.topPerformers.length > 0
-                    ? stats.topPerformers[0].studentName
-                    : "N/A"}
-                </p>
-              </div>
-            </motion.div>
-          </div>
-        )}
+              <p className="mt-2 text-2xl font-semibold text-slate-900">{c.value}</p>
+            </div>
+          ))}
+        </div>
 
         {/* Filters and Search */}
-        <div className="bg-white/90 backdrop-blur-sm border border-white/30 rounded-2xl p-6 mb-8 shadow-xl">
+        <div className="bg-white border border-slate-200 rounded-xl p-4 mb-6 shadow-sm">
           <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-5 w-5" />
@@ -604,14 +625,14 @@ const AdminResultsView: React.FC = () => {
                 placeholder="Search students..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                className="w-full pl-10 pr-3 py-2 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-[#0C4A9F]/20 focus:border-[#0C4A9F]"
               />
             </div>
 
             <select
               value={classFilter}
               onChange={(e) => setClassFilter(e.target.value)}
-              className="px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              className="px-3 py-2 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-[#0C4A9F]/20 focus:border-[#0C4A9F]"
             >
               <option value="all">All Classes</option>
               {availableClasses.map((className) => (
@@ -624,7 +645,7 @@ const AdminResultsView: React.FC = () => {
             <select
               value={sessionFilter}
               onChange={(e) => setSessionFilter(e.target.value)}
-              className="px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              className="px-3 py-2 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-[#0C4A9F]/20 focus:border-[#0C4A9F]"
             >
               <option value="all">All Sessions</option>
               {availableSessions.map((session) => (
@@ -637,7 +658,7 @@ const AdminResultsView: React.FC = () => {
             <select
               value={termFilter}
               onChange={(e) => setTermFilter(e.target.value)}
-              className="px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              className="px-3 py-2 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-[#0C4A9F]/20 focus:border-[#0C4A9F]"
             >
               <option value="all">All Terms</option>
               <option value="first">First Term</option>
@@ -645,44 +666,93 @@ const AdminResultsView: React.FC = () => {
               <option value="third">Third Term</option>
             </select>
 
-            <button className="bg-gradient-to-r from-indigo-500 to-purple-600 text-white px-6 py-3 rounded-xl hover:from-indigo-600 hover:to-purple-700 transition-all flex items-center justify-center">
-              <Filter className="h-4 w-4 mr-2" />
-              Filter
-            </button>
+            <select
+              value={statusFilter}
+              onChange={(e) =>
+                setStatusFilter(e.target.value as "all" | "published" | "draft")
+              }
+              className="px-3 py-2 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-[#0C4A9F]/20 focus:border-[#0C4A9F]"
+            >
+              <option value="all">All statuses</option>
+              <option value="draft">Drafts (not visible)</option>
+              <option value="published">Published</option>
+            </select>
           </div>
         </div>
 
         {/* Results Table */}
-        <div className="bg-white/90 backdrop-blur-sm border border-white/30 rounded-2xl shadow-xl overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-200">
-            <h3 className="text-lg font-semibold text-gray-900">
-              Student Results
-            </h3>
+        <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-200 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-lg font-semibold text-gray-900">
+                Student Results
+              </h3>
+              <p className="text-sm text-gray-500">
+                {filteredResults.length} shown ·{" "}
+                <span className={draftsShown.length ? "text-amber-600 font-medium" : ""}>
+                  {draftsShown.length} draft(s) not visible to students/parents
+                </span>
+              </p>
+            </div>
+            {draftsShown.length > 0 &&
+              (confirmPublishAll ? (
+                <div className="flex flex-wrap items-center gap-2 text-sm">
+                  <span className="text-gray-700">
+                    Publish {draftsShown.length} result(s) and email students &amp; parents?
+                  </span>
+                  <button
+                    onClick={publishAllShown}
+                    className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
+                  >
+                    Yes, publish
+                  </button>
+                  <button
+                    onClick={() => setConfirmPublishAll(false)}
+                    className="px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setConfirmPublishAll(true)}
+                  disabled={publishingAll}
+                  className="inline-flex items-center px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  <CheckCircle className="h-4 w-4 mr-2" />
+                  {publishingAll
+                    ? "Publishing..."
+                    : `Publish all shown drafts (${draftsShown.length})`}
+                </button>
+              ))}
           </div>
 
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
                     Student
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
                     Session/Term
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
                     Average Score
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
                     Grade
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
                     Position
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
                     Subjects
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
+                    Status
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
                     Actions
                   </th>
                 </tr>
@@ -690,7 +760,7 @@ const AdminResultsView: React.FC = () => {
               <tbody className="bg-white divide-y divide-gray-200">
                 {filteredResults.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-6 py-12 text-center">
+                    <td colSpan={8} className="px-6 py-12 text-center">
                       <div className="text-gray-500">
                         <FileText className="h-12 w-12 mx-auto mb-4 text-gray-300" />
                         <p className="text-lg font-medium">No results found</p>
@@ -705,10 +775,10 @@ const AdminResultsView: React.FC = () => {
                 ) : (
                   filteredResults.map((result) => (
                     <tr key={result._id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap">
+                      <td className="px-4 py-3 whitespace-nowrap">
                         <div className="flex items-center">
-                          <div className="flex-shrink-0 h-10 w-10">
-                            <div className="h-10 w-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center">
+                          <div className="flex-shrink-0 h-9 w-9">
+                            <div className="h-9 w-9 rounded-full bg-[#0C4A9F] flex items-center justify-center">
                               <Users className="h-5 w-5 text-white" />
                             </div>
                           </div>
@@ -721,17 +791,18 @@ const AdminResultsView: React.FC = () => {
                             </div>
                             <div className="text-sm text-gray-500">
                               {result.studentId?.studentId || "N/A"} •{" "}
-                              {result.studentId?.academicInfo?.currentClass ||
+                              {result.class ||
+                                result.studentId?.academicInfo?.currentClass ||
                                 "N/A"}
                             </div>
                           </div>
                         </div>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
                         <div>{result.academicSession}</div>
                         <div className="capitalize">{result.term} term</div>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
+                      <td className="px-4 py-3 whitespace-nowrap">
                         <div className="text-sm font-medium text-gray-900">
                           {result.summary.averageScore.toFixed(1)}%
                         </div>
@@ -740,7 +811,7 @@ const AdminResultsView: React.FC = () => {
                           {result.subjects.length * 100}
                         </div>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
+                      <td className="px-4 py-3 whitespace-nowrap">
                         <span
                           className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getGradeColor(
                             result.summary.overallGrade
@@ -749,14 +820,41 @@ const AdminResultsView: React.FC = () => {
                           {result.summary.overallGrade}
                         </span>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                      <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
                         {result.summary.position}
                         {getPositionSuffix(result.summary.position)}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
                         {result.subjects.length} subjects
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                      <td className="px-4 py-3 whitespace-nowrap text-sm">
+                        <button
+                          onClick={() => togglePublish(result)}
+                          disabled={busyIds.includes(result._id)}
+                          title={
+                            result.isPublished
+                              ? "Click to hide from student and parent"
+                              : "Click to publish to student and parent"
+                          }
+                          className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium disabled:opacity-50 ${
+                            result.isPublished
+                              ? "bg-emerald-100 text-emerald-800 hover:bg-emerald-200"
+                              : "bg-amber-100 text-amber-800 hover:bg-amber-200"
+                          }`}
+                        >
+                          {result.isPublished ? (
+                            <CheckCircle className="h-3.5 w-3.5 mr-1" />
+                          ) : (
+                            <XCircle className="h-3.5 w-3.5 mr-1" />
+                          )}
+                          {busyIds.includes(result._id)
+                            ? "Saving..."
+                            : result.isPublished
+                            ? "Published"
+                            : "Draft - publish"}
+                        </button>
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-sm font-medium">
                         <div className="flex items-center space-x-2">
                           <button
                             onClick={() => {
@@ -770,9 +868,9 @@ const AdminResultsView: React.FC = () => {
                           </button>
 
                           <button
-                            onClick={() => generateResultSheet(result)}
+                            onClick={() => window.open(`/results/sheet/${result._id}`, "_blank")}
                             className="text-emerald-600 hover:text-emerald-900"
-                            title="Generate Result Sheet"
+                            title="Open printable report sheet"
                           >
                             <Printer className="h-4 w-4" />
                           </button>
@@ -914,13 +1012,13 @@ const AdminResultsView: React.FC = () => {
                 <table className="min-w-full divide-y divide-gray-200">
                   <thead className="bg-gray-50">
                     <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
                         Subject
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
                         Score
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
                         Grade
                       </th>
                     </tr>
@@ -928,13 +1026,13 @@ const AdminResultsView: React.FC = () => {
                   <tbody className="bg-white divide-y divide-gray-200">
                     {selectedResult.subjects.map((subject, index) => (
                       <tr key={index}>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                        <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
                           {subject.subjectName}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
                           {subject.scores.total}/100
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
+                        <td className="px-4 py-3 whitespace-nowrap">
                           <span
                             className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getGradeColor(
                               subject.grade
@@ -992,7 +1090,7 @@ const AdminResultsView: React.FC = () => {
                 Close
               </button>
               <button
-                onClick={() => generateResultSheet(selectedResult)}
+                onClick={() => window.open(`/results/sheet/${selectedResult._id}`, "_blank")}
                 className="px-4 py-2 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white rounded-lg hover:from-emerald-600 hover:to-emerald-700 transition-all flex items-center"
               >
                 <Printer className="h-4 w-4 mr-2" />

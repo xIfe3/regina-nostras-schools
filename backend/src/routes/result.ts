@@ -13,6 +13,8 @@ import {
   downloadBulkTemplate,
   generateResultSheet,
   sendResultNotification,
+  publishResults,
+  getResultSheet,
 } from "../controllers/resultController.js";
 import { auth, authorize } from "../middleware/auth.js";
 import { upload } from "../utils/cloudinary.js";
@@ -22,6 +24,9 @@ const router = express.Router();
 
 // Public routes (for both student and admin)
 router.get("/sessions-terms", auth, getSessionsAndTerms);
+
+// Printable report sheet (admin, student, parent - ownership checked in the controller)
+router.get("/:id/sheet", auth, authorize("admin", "student", "parent"), getResultSheet);
 
 // Student routes
 router.get("/student", auth, authorize("student"), getStudentResults);
@@ -44,6 +49,7 @@ router.post(
   authorize("admin"),
   sendResultNotification
 );
+router.post("/publish", auth, authorize("admin"), publishResults);
 router.put("/:id/publish", auth, authorize("admin"), toggleResultPublication);
 
 router

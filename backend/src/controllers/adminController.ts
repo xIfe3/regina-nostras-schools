@@ -5,10 +5,26 @@ import Student from "../models/Student";
 import AdminProfile from "../models/AdminProfile";
 import Result from "../models/Result";
 import Payment from "../models/Payment";
+import Parent from "../models/Parent";
 import { AuthRequest } from "../middleware/auth";
 import { sendEmail } from "../utils/email";
 import { uploadFile } from "../utils/cloudinary";
 import { ActivityLogger } from "../utils/activityLogger.js";
+import {
+  createStudentAccount,
+  StudentAccountError,
+} from "../utils/studentAccount";
+import {
+  parseStudentsFile,
+  generateStudentsTemplateCsv,
+} from "../utils/fileParser";
+import { cleanupFile } from "../utils/localUpload";
+import path from "path";
+import {
+  syncParentAccount,
+  unlinkStudentFromParents,
+  ParentLinkResult,
+} from "../utils/parentAccount";
 
 // @desc    Get all students
 // @route   GET /api/admin/students
@@ -105,142 +121,146 @@ export const getStudent = async (req: AuthRequest, res: Response) => {
 // @access  Private/Admin
 export const createStudent = async (req: AuthRequest, res: Response) => {
   try {
-    console.log("Request body:", req.body);
-    console.log("Request files:", req.file);
-
-    // Parse student data from form data
-    let studentData;
+    // Student data arrives as a JSON string in multipart form data (with optional photo)
+    let studentData: any;
     try {
-      studentData = JSON.parse(req.body.studentData || "{}");
+      studentData =
+        typeof req.body.studentData === "string"
+          ? JSON.parse(req.body.studentData || "{}")
+          : req.body.studentData || {};
     } catch (error) {
-      // If JSON parsing fails, try to construct from flat structure
-      studentData = {
-        personalInfo: {
-          firstName: req.body.firstName,
-          lastName: req.body.lastName,
-          dateOfBirth: req.body.dateOfBirth,
-          medicalInfo: req.body.medicalInfo || "",
-        },
-        contactInfo: {
-          email: req.body.email,
-          phone: req.body.phone || "",
-          address: req.body.address || "",
-        },
-        parentInfo: {
-          name: req.body.parentName || "",
-          phone: req.body.parentPhone || "",
-          email: req.body.parentEmail || "",
-        },
-        academicInfo: {
-          currentClass: req.body.class,
-          status: "active",
-        },
-      };
-    }
-
-    console.log("Parsed student data:", studentData);
-
-    // Validate required fields
-    if (
-      !studentData.personalInfo?.firstName ||
-      !studentData.personalInfo?.lastName ||
-      !studentData.contactInfo?.email ||
-      !studentData.academicInfo?.currentClass
-    ) {
       return res.status(400).json({
         success: false,
-        message:
-          "Missing required fields: firstName, lastName, email, and class are required",
+        message: "Invalid student data format",
       });
     }
 
-    // Check if email already exists
-    const existingUser = await User.findOne({
-      email: studentData.contactInfo.email,
-    });
-    if (existingUser) {
-      return res.status(400).json({
-        success: false,
-        message: "Email already exists",
-      });
+    // With CloudinaryStorage the file is already uploaded; req.file.path is its URL
+    if (req.file?.path) {
+      studentData.personalInfo = studentData.personalInfo || {};
+      studentData.personalInfo.profilePhoto = req.file.path;
     }
 
-    // Handle profile picture upload
-    let profilePictureUrl = "";
-    if (req.file) {
-      try {
-        // With CloudinaryStorage, the file is already uploaded to Cloudinary
-        // req.file.path contains the Cloudinary URL
-        profilePictureUrl = req.file.path;
-      } catch (uploadError) {
-        console.error("Profile picture upload error:", uploadError);
-        // Continue without profile picture if upload fails
-      }
-    }
+    const created = await createStudentAccount(studentData);
+    const { student, temporaryPassword, welcomeEmailSent, parentAccount } = created;
 
-    // Generate random password
-    const password = crypto.randomBytes(8).toString("hex");
-
-    // Create user account
-    const user = await User.create({
-      email: studentData.contactInfo.email,
-      password,
-      role: "student",
-    });
-
-    // Add profile picture URL to student data
-    if (profilePictureUrl) {
-      studentData.personalInfo.profilePhoto = profilePictureUrl;
-    }
-
-    // Create student profile
-    const student = await Student.create({
-      userId: user._id,
-      ...studentData,
-    });
-
-    // Log student creation activity
     await ActivityLogger.logStudentActivity(req.user!._id, "student_added", {
       name: `${student.personalInfo.firstName} ${student.personalInfo.lastName}`,
       className: student.academicInfo.currentClass,
       studentId: student._id,
     });
 
-    // Send welcome email with login credentials
-    await sendEmail({
-      to: user.email,
-      subject: "Welcome to Regina Nostras Schools - Student Portal",
-      html: `
-        <h2>Welcome to Regina Nostras Schools Student Portal</h2>
-        <p>Dear ${student.personalInfo.firstName} ${student.personalInfo.lastName},</p>
-        <p>Your student account has been created successfully. Here are your login credentials:</p>
-        <p><strong>Email:</strong> ${user.email}</p>
-        <p><strong>Password:</strong> ${password}</p>
-        <p><strong>Student ID:</strong> ${student.studentId}</p>
-        <p>Please login to the student portal and change your password immediately for security reasons.</p>
-        <p>Portal URL: ${process.env.FRONTEND_URL}/student/login</p>
-        <br>
-        <p>Best regards,<br>Regina Nostras Schools Administration</p>
-      `,
-    });
-
     res.status(201).json({
       success: true,
-      message: "Student created successfully. Login credentials sent to email.",
+      message: welcomeEmailSent
+        ? "Student created successfully. Login credentials sent to email."
+        : "Student created, but the welcome email could not be sent. Share the temporary password with the student.",
       data: {
         student,
-        temporaryPassword: password,
+        temporaryPassword,
+        welcomeEmailSent,
+        parentAccount,
       },
     });
   } catch (error) {
+    if (error instanceof StudentAccountError) {
+      return res.status(error.status).json({
+        success: false,
+        message: error.message,
+      });
+    }
     console.error("Create student error:", error);
     res.status(500).json({
       success: false,
       message: "Server error creating student",
-      error: error instanceof Error ? error.message : "Unknown error",
     });
   }
 };
+
+// @desc    Download CSV template for bulk student upload
+// @route   GET /api/admin/students/bulk-template
+// @access  Private/Admin
+export const downloadStudentTemplate = async (req: AuthRequest, res: Response) => {
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader(
+    "Content-Disposition",
+    'attachment; filename="student_bulk_upload_template.csv"'
+  );
+  res.send(generateStudentsTemplateCsv());
+};
+
+// @desc    Create many students (and their parent logins) from a CSV/XLSX file
+// @route   POST /api/admin/students/bulk-upload
+// @access  Private/Admin
+export const bulkUploadStudents = async (req: AuthRequest, res: Response) => {
+  if (!req.file) {
+    return res.status(400).json({
+      success: false,
+      message: "Please upload a CSV or Excel (.xlsx) file",
+    });
+  }
+
+  try {
+    const ext = path.extname(req.file.originalname).toLowerCase().substring(1);
+    const parsed = await parseStudentsFile(req.file.path, ext);
+    cleanupFile(req.file.path);
+
+    const errors = [...parsed.errors];
+    const success: any[] = [];
+
+    for (const { rowNumber, studentData } of parsed.success) {
+      try {
+        const created = await createStudentAccount(studentData);
+        const s = created.student;
+        await ActivityLogger.logStudentActivity(req.user!._id, "student_added", {
+          name: `${s.personalInfo.firstName} ${s.personalInfo.lastName}`,
+          className: s.academicInfo.currentClass,
+          studentId: String(s._id),
+        });
+        success.push({
+          row: rowNumber,
+          studentId: s.studentId,
+          name: `${s.personalInfo.firstName} ${s.personalInfo.lastName}`,
+          class: s.academicInfo.currentClass,
+          email: s.contactInfo.email,
+          temporaryPassword: created.temporaryPassword,
+          welcomeEmailSent: created.welcomeEmailSent,
+          parentEmail: created.parentAccount?.email || "",
+          parentStatus: created.parentAccount?.status || "no_email",
+          parentTemporaryPassword: created.parentAccount?.temporaryPassword || "",
+          parentEmailSent: created.parentAccount?.emailSent ?? null,
+        });
+      } catch (error) {
+        errors.push({
+          row: rowNumber,
+          studentId: studentData?.contactInfo?.email,
+          error:
+            error instanceof StudentAccountError
+              ? error.message
+              : `Could not create student: ${(error as Error).message}`,
+        });
+      }
+    }
+
+    errors.sort((a, b) => a.row - b.row);
+
+    res.status(200).json({
+      success: success.length > 0 || errors.length === 0,
+      message: `${success.length} student(s) created${
+        errors.length ? `, ${errors.length} row(s) had errors` : ""
+      }.`,
+      data: { success, errors },
+    });
+  } catch (error) {
+    cleanupFile(req.file.path);
+    console.error("Bulk student upload error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error during bulk student upload",
+    });
+  }
+};
+
 
 // @desc    Update student
 // @route   PUT /api/admin/students/:id
@@ -342,10 +362,19 @@ export const updateStudent = async (req: AuthRequest, res: Response) => {
       studentId: updatedStudent!._id,
     });
 
+    // Keep the parent portal link in sync with the parent/guardian email
+    let parentAccount: ParentLinkResult | null = null;
+    try {
+      parentAccount = await syncParentAccount(updatedStudent!);
+    } catch (parentError) {
+      console.error("Parent account sync error:", parentError);
+    }
+
     res.status(200).json({
       success: true,
       message: "Student updated successfully",
       data: updatedStudent,
+      parentAccount,
     });
   } catch (error) {
     console.error("Update student error:", error);
@@ -374,8 +403,9 @@ export const deleteStudent = async (req: AuthRequest, res: Response) => {
     // Delete associated user account
     await User.findByIdAndDelete(student.userId);
 
-    // Delete student record
+    // Delete student record and remove it from any parent accounts
     await Student.findByIdAndDelete(req.params.id);
+    await unlinkStudentFromParents(req.params.id);
 
     res.status(200).json({
       success: true,
@@ -386,6 +416,83 @@ export const deleteStudent = async (req: AuthRequest, res: Response) => {
     res.status(500).json({
       success: false,
       message: "Server error deleting student",
+    });
+  }
+};
+
+// @desc    Get the parent portal account linked to a student
+// @route   GET /api/admin/students/:id/parent-account
+// @access  Private/Admin
+export const getStudentParentAccount = async (
+  req: AuthRequest,
+  res: Response
+) => {
+  try {
+    const student = await Student.findById(req.params.id);
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student not found",
+      });
+    }
+
+    const parent = await Parent.findOne({ children: student._id }).populate(
+      "userId",
+      "email isActive lastLogin"
+    );
+
+    res.status(200).json({
+      success: true,
+      data: parent
+        ? {
+            _id: parent._id,
+            name: parent.name,
+            phoneNumber: parent.phoneNumber,
+            childrenCount: parent.children.length,
+            user: parent.userId,
+          }
+        : null,
+    });
+  } catch (error) {
+    console.error("Get parent account error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error getting parent account",
+    });
+  }
+};
+
+// @desc    Create/link the parent portal account for a student, or reset and resend its password
+// @route   POST /api/admin/students/:id/parent-account
+// @access  Private/Admin
+export const createOrResendParentAccount = async (
+  req: AuthRequest,
+  res: Response
+) => {
+  try {
+    const student = await Student.findById(req.params.id);
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student not found",
+      });
+    }
+
+    const result = await syncParentAccount(student, {
+      resendCredentials: req.body?.resend === true,
+    });
+
+    const ok = result.status !== "no_email" && result.status !== "email_in_use";
+    res.status(ok ? 200 : 400).json({
+      success: ok,
+      message: result.message,
+      data: result,
+    });
+  } catch (error) {
+    console.error("Create parent account error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error creating parent account",
     });
   }
 };
@@ -676,6 +783,10 @@ export const getDashboardStats = async (req: AuthRequest, res: Response) => {
     });
 
     const totalResults = await Result.countDocuments();
+    const draftResults = await Result.countDocuments({ isPublished: false });
+    const parentAccounts = await Parent.countDocuments({
+      "children.0": { $exists: true },
+    });
 
     const pendingPayments = await Payment.countDocuments({
       status: "pending",
@@ -735,6 +846,9 @@ export const getDashboardStats = async (req: AuthRequest, res: Response) => {
         overview: {
           totalStudents,
           totalResults,
+          draftResults,
+          publishedResults: totalResults - draftResults,
+          parentAccounts,
           pendingPayments,
           totalPayments,
           verifiedPayments,

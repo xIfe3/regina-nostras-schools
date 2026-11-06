@@ -19,6 +19,8 @@ import activityRoutes from "./routes/activity";
 import eventRoutes from "./routes/event";
 import contactRoutes from "./routes/contact";
 import announcementRoutes from "./routes/announcement";
+import parentRoutes from "./routes/parent";
+import { settingsRouter, noticesRouter } from "./routes/settings";
 
 // Import middleware
 import { errorHandler } from "./middleware/errorHandler";
@@ -29,22 +31,50 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Behind cPanel's LiteSpeed proxy: use X-Forwarded-For for the real client IP
+app.set("trust proxy", 1);
+
 // Security middleware
 app.use(helmet());
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:3000",
+    // FRONTEND_URL may hold several comma-separated origins (e.g. with and without www)
+    origin: (process.env.FRONTEND_URL || "http://localhost:3000")
+      .split(",")
+      .map((url) => url.trim().replace(/\/$/, "")),
     credentials: true,
   })
 );
 
 // Rate limiting
+// General API limit. A whole school (staff + students on the same Wi-Fi) shares one
+// public IP, and each dashboard page makes several requests, so this must be generous.
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
-  message: "Too many requests from this IP, please try again later.",
+  max: Number(process.env.RATE_LIMIT_MAX) || 2000,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many requests from this network, please try again in a few minutes.",
+  },
 });
-app.use(limiter);
+app.use("/api", limiter);
+
+// Strict limit on password guessing: login / password reset attempts per IP
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: Number(process.env.AUTH_RATE_LIMIT_MAX) || 50,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many sign-in attempts. Please wait 15 minutes and try again.",
+  },
+});
+app.use("/api/auth/login", authLimiter);
+app.use("/api/auth/forgot-password", authLimiter);
+app.use("/api/auth/reset-password", authLimiter);
 
 // Body parsing middleware
 app.use(express.json({ limit: "10mb" }));
@@ -79,6 +109,9 @@ app.use("/api/activities", activityRoutes);
 app.use("/api/events", eventRoutes);
 app.use("/api/contact", contactRoutes);
 app.use("/api/announcements", announcementRoutes);
+app.use("/api/parent", parentRoutes);
+app.use("/api/settings", settingsRouter);
+app.use("/api/notices", noticesRouter);
 
 // Error handling middleware
 app.use(notFound);

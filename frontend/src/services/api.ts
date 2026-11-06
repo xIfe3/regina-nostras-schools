@@ -6,8 +6,9 @@ import type { AxiosResponse } from "axios";
  * Uses centralized environment configuration
  */
 const api = axios.create({
-  baseURL: "https://api.reginanostraschools.com/api",
-  // baseURL: "http://localhost:4000/api",
+  // Set VITE_API_URL (e.g. http://localhost:4000/api) to point at a local backend
+  baseURL:
+    import.meta.env.VITE_API_URL || "https://api.reginanostraschools.com/api",
   timeout: 30000,
   headers: {
     "Content-Type": "application/json",
@@ -37,6 +38,13 @@ api.interceptors.request.use(
  * Handles common HTTP status codes and authentication errors
  * Gracefully handles network errors without forcing logout
  */
+/** Message shown on the login page after a user is sent there because the portal was closed */
+export const PORTAL_BLOCKED_KEY = "portal_blocked_message";
+
+/** Error that keeps the HTTP response so callers can check status/data */
+const apiError = (message: string, response?: unknown) =>
+  Object.assign(new Error(message), { response });
+
 api.interceptors.response.use(
   (response) => response,
   (error) => {
@@ -46,6 +54,9 @@ api.interceptors.response.use(
       throw new Error("Network error. Please check your connection.");
     }
 
+    const onLoginPage = window.location.pathname.includes("/login");
+    const serverMessage: string | undefined = error.response?.data?.message;
+
     // Handle authentication errors (401 Unauthorized)
     if (error.response?.status === 401) {
       console.warn("Authentication failed (401), clearing auth data");
@@ -53,34 +64,56 @@ api.interceptors.response.use(
       localStorage.removeItem("user_data");
 
       // Only redirect to login if not already on login page
-      if (!window.location.pathname.includes("/login")) {
+      if (!onLoginPage) {
         window.location.href = "/login";
       }
 
       return Promise.reject(
-        new Error("Authentication failed. Please login again.")
+        apiError(
+          onLoginPage && serverMessage
+            ? serverMessage
+            : "Authentication failed. Please login again.",
+          error.response
+        )
       );
     }
 
     // Handle forbidden errors (403 Forbidden)
     if (error.response?.status === 403) {
+      const code = error.response?.data?.code;
+
+      // Portal closed by the school (maintenance / logins disabled):
+      // sign the user out and show the school's message on the login page
+      if (code === "MAINTENANCE" || code === "LOGIN_DISABLED") {
+        localStorage.removeItem("auth_token");
+        localStorage.removeItem("user_data");
+        if (serverMessage) sessionStorage.setItem(PORTAL_BLOCKED_KEY, serverMessage);
+        if (!onLoginPage) window.location.href = "/login";
+        return Promise.reject(
+          apiError(serverMessage || "The portal is currently closed.", error.response)
+        );
+      }
+
       console.warn("Access forbidden (403)");
       return Promise.reject(
-        new Error("Access denied. You don't have permission for this action.")
+        apiError(
+          "Access denied. You don't have permission for this action.",
+          error.response
+        )
       );
     }
 
     // Handle server errors (5xx)
     if (error.response?.status >= 500) {
       console.error("Server error:", error.response.data);
-      throw new Error("Server error. Please try again later.");
+      throw apiError("Server error. Please try again later.", error.response);
     }
 
     // Handle client errors (4xx except 401 and 403)
     if (error.response?.status >= 400 && error.response?.status < 500) {
-      const message = error.response?.data?.message || "Request failed";
+      const message = serverMessage || "Request failed";
       console.error("Client error:", message);
-      return Promise.reject(new Error(message));
+      return Promise.reject(apiError(message, error.response));
     }
 
     // Handle other errors
@@ -93,10 +126,53 @@ api.interceptors.response.use(
 export interface User {
   _id: string;
   email: string;
-  role: "admin" | "student";
+  role: "admin" | "student" | "parent";
   isActive: boolean;
   lastLogin?: string;
   student?: Student;
+  parent?: ParentProfile | null;
+}
+
+/** Child summary as returned to a parent (no contact/medical details) */
+export interface ParentChild {
+  _id: string;
+  studentId: string;
+  personalInfo: {
+    firstName: string;
+    lastName: string;
+    middleName?: string;
+    gender?: "male" | "female";
+    dateOfBirth?: string;
+    profilePhoto?: string;
+  };
+  academicInfo: {
+    currentClass: string;
+    classArm?: string;
+    status: "active" | "graduated" | "transferred" | "suspended";
+    admissionDate?: string;
+  };
+}
+
+export interface ParentProfile {
+  _id: string;
+  name: string;
+  phoneNumber?: string;
+  email?: string;
+  children: ParentChild[];
+}
+
+export interface ParentAccountResult {
+  status:
+    | "created"
+    | "linked"
+    | "already_linked"
+    | "credentials_resent"
+    | "no_email"
+    | "email_in_use";
+  email?: string;
+  temporaryPassword?: string;
+  emailSent?: boolean;
+  message: string;
 }
 
 export interface Student {
@@ -350,6 +426,116 @@ export const paymentAPI = {
   },
 };
 
+// School-wide settings
+export interface PublicSettings {
+  school: { name: string; motto?: string; logo?: string };
+  access: {
+    maintenanceMode: boolean;
+    maintenanceMessage: string;
+    studentLoginEnabled: boolean;
+    parentLoginEnabled: boolean;
+    loginDisabledMessage: string;
+  };
+}
+
+export interface SystemSettings {
+  school: {
+    name: string;
+    motto?: string;
+    address?: string;
+    phone?: string;
+    email?: string;
+    website?: string;
+    logo?: string;
+    letterheadImage?: string;
+  };
+  resultSheet: {
+    title: string;
+    principalName?: string;
+    principalSignature?: string;
+    schoolStamp?: string;
+    footerNote?: string;
+    showPosition: boolean;
+    showBehaviour: boolean;
+    showGradeKey: boolean;
+  };
+  access: PublicSettings["access"];
+  updatedAt?: string;
+}
+
+export interface LoginNotice {
+  _id: string;
+  title: string;
+  message: string;
+  type: "info" | "success" | "warning" | "urgent";
+  audience: "all" | "students" | "parents";
+  isActive: boolean;
+  startsAt?: string;
+  endsAt?: string;
+  showOnce: boolean;
+  seenBy?: number;
+  createdAt: string;
+}
+
+export const settingsAPI = {
+  getPublic: (): Promise<AxiosResponse<ApiResponse<PublicSettings>>> =>
+    api.get("/settings/public"),
+  getAll: (): Promise<AxiosResponse<ApiResponse<SystemSettings>>> =>
+    api.get("/settings"),
+  update: (
+    data: Partial<{
+      school: Partial<SystemSettings["school"]>;
+      resultSheet: Partial<SystemSettings["resultSheet"]>;
+      access: Partial<SystemSettings["access"]>;
+    }>
+  ): Promise<AxiosResponse<ApiResponse<SystemSettings>>> => api.put("/settings", data),
+};
+
+export const noticesAPI = {
+  list: (): Promise<AxiosResponse<ApiResponse<LoginNotice[]>>> => api.get("/notices"),
+  create: (data: Partial<LoginNotice>): Promise<AxiosResponse<ApiResponse<LoginNotice>>> =>
+    api.post("/notices", data),
+  update: (
+    id: string,
+    data: Partial<LoginNotice> & { resetSeen?: boolean }
+  ): Promise<AxiosResponse<ApiResponse<LoginNotice>>> => api.put(`/notices/${id}`, data),
+  remove: (id: string): Promise<AxiosResponse<ApiResponse<null>>> =>
+    api.delete(`/notices/${id}`),
+  active: (): Promise<AxiosResponse<ApiResponse<LoginNotice[]>>> => api.get("/notices/active"),
+  dismiss: (id: string): Promise<AxiosResponse<ApiResponse<null>>> =>
+    api.post(`/notices/${id}/dismiss`),
+};
+
+// Parent API
+export const parentAPI = {
+  getProfile: (): Promise<AxiosResponse<ApiResponse<ParentProfile>>> =>
+    api.get("/parent/profile"),
+
+  updateProfile: (data: {
+    name?: string;
+    phoneNumber?: string;
+  }): Promise<AxiosResponse<ApiResponse<ParentProfile>>> =>
+    api.put("/parent/profile", data),
+
+  getChildResults: (
+    studentId: string,
+    params?: { academicSession?: string; term?: string }
+  ): Promise<AxiosResponse<ApiResponse<any[]>>> =>
+    api.get(`/parent/children/${studentId}/results`, { params }),
+
+  getChildResult: (
+    studentId: string,
+    resultId: string
+  ): Promise<AxiosResponse<ApiResponse<any>>> =>
+    api.get(`/parent/children/${studentId}/results/${resultId}`),
+
+  getChildPayments: (
+    studentId: string,
+    params?: { page?: number; limit?: number; status?: string }
+  ): Promise<AxiosResponse<ApiResponse<any[]>>> =>
+    api.get(`/parent/children/${studentId}/payments`, { params }),
+};
+
 // Admin API
 export const adminAPI = {
   // Student management
@@ -378,6 +564,16 @@ export const adminAPI = {
 
   deleteStudent: (id: string): Promise<AxiosResponse<ApiResponse<null>>> =>
     api.delete(`/admin/students/${id}`),
+
+  // Parent portal account for a student
+  getStudentParentAccount: (id: string): Promise<AxiosResponse<ApiResponse<any>>> =>
+    api.get(`/admin/students/${id}/parent-account`),
+
+  createOrResendParentAccount: (
+    id: string,
+    resend = false
+  ): Promise<AxiosResponse<ApiResponse<ParentAccountResult>>> =>
+    api.post(`/admin/students/${id}/parent-account`, { resend }),
 
   // Results management
   getResults: (params?: {

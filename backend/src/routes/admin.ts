@@ -14,9 +14,14 @@ import {
   updateAdminProfile,
   uploadAdminProfilePhoto,
   changeAdminPassword,
+  getStudentParentAccount,
+  createOrResendParentAccount,
+  downloadStudentTemplate,
+  bulkUploadStudents,
 } from "../controllers/adminController.js";
 import { auth, authorize } from "../middleware/auth.js";
 import { upload } from "../utils/cloudinary.js";
+import { localUpload } from "../utils/localUpload.js";
 
 const router = express.Router();
 
@@ -27,6 +32,14 @@ router.use(auth, authorize("admin"));
 router.get("/dashboard/stats", getDashboardStats);
 
 // Student management routes
+// Bulk routes must come before /students/:id so "bulk-template" is not read as an id
+router.get("/students/bulk-template", downloadStudentTemplate);
+router.post(
+  "/students/bulk-upload",
+  localUpload.single("file"),
+  bulkUploadStudents
+);
+
 router
   .route("/students")
   .get(getStudents)
@@ -37,6 +50,11 @@ router
   .get(getStudent)
   .put(upload.single("profileImage"), updateStudent)
   .delete(deleteStudent);
+
+router
+  .route("/students/:id/parent-account")
+  .get(getStudentParentAccount)
+  .post(createOrResendParentAccount);
 
 // Results management routes
 router.post("/results/bulk-upload", bulkUploadResults);

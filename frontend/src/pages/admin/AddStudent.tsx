@@ -233,6 +233,25 @@ const AddStudent: React.FC = () => {
 
       console.log("Student created successfully:", response.data);
       toast.success("Student added successfully!");
+
+      // Tell the admin what happened with the parent portal login
+      const parentAccount = response.data?.data?.parentAccount;
+      if (parentAccount) {
+        if (parentAccount.emailSent === false && parentAccount.temporaryPassword) {
+          toast(
+            `${parentAccount.message}\nParent login: ${parentAccount.email} / ${parentAccount.temporaryPassword}`,
+            { icon: "⚠️", duration: 20000 }
+          );
+        } else if (
+          parentAccount.status === "created" ||
+          parentAccount.status === "linked"
+        ) {
+          toast.success(parentAccount.message, { duration: 6000 });
+        } else if (parentAccount.status === "email_in_use") {
+          toast.error(parentAccount.message, { duration: 8000 });
+        }
+      }
+
       navigate("/admin/students");
     } catch (error: any) {
       console.error("Error adding student:", error);
@@ -301,7 +320,7 @@ const AddStudent: React.FC = () => {
                 )}
               </div>
               <div className="flex-1">
-                <label className="cursor-pointer inline-flex items-center px-6 py-3 border border-transparent text-sm font-medium rounded-lg text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-blue-500 transform hover:scale-105 transition-all duration-200 shadow-lg">
+                <label className="cursor-pointer inline-flex items-center px-6 py-3 border border-transparent text-sm font-medium rounded-lg text-white bg-[#0C4A9F] hover:bg-[#0A2F66] focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-blue-500 transform hover:scale-105 transition-all duration-200 shadow-lg">
                   <Upload className="h-5 w-5 mr-2" />
                   <span>Choose Profile Picture</span>
                   <input
@@ -735,7 +754,7 @@ const AddStudent: React.FC = () => {
             <button
               type="submit"
               disabled={loading}
-              className="inline-flex items-center px-8 py-3 border border-transparent text-sm font-semibold rounded-lg shadow-lg text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none transform hover:scale-105 transition-all duration-200"
+              className="inline-flex items-center px-8 py-3 border border-transparent text-sm font-semibold rounded-lg shadow-lg text-white bg-[#0C4A9F] hover:bg-[#0A2F66] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none transform hover:scale-105 transition-all duration-200"
             >
               {loading ? (
                 <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-3"></div>

@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import api from "../../services/api";
 import toast from "react-hot-toast";
+import ParentPortalAccess from "./ParentPortalAccess";
 
 interface Student {
   _id: string;
@@ -235,7 +236,7 @@ const StudentView: React.FC = () => {
             </button>
             <Link
               to={`/admin/students/${student._id}/edit`}
-              className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+              className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-[#0C4A9F] hover:bg-[#0A2F66] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
             >
               <Edit className="h-4 w-4 mr-2" />
               Edit Student
@@ -515,6 +516,9 @@ const StudentView: React.FC = () => {
               </div>
             </div>
           </motion.div>
+
+          {/* Parent portal login */}
+          <ParentPortalAccess studentId={student._id} />
 
           {/* Parent/Guardian Information */}
           {student.parentGuardianInfo &&

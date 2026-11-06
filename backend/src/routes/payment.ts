@@ -7,6 +7,7 @@ import {
   verifyPayment,
   rejectPayment,
   getPaymentStatistics,
+  exportPayments,
 } from "../controllers/paymentController.js";
 import { auth, authorize } from "../middleware/auth.js";
 import { upload } from "../utils/cloudinary.js";
@@ -29,5 +30,6 @@ router.get("/admin", auth, authorize("admin"), getAllPayments);
 router.put("/:id/verify", auth, authorize("admin"), verifyPayment);
 router.put("/:id/reject", auth, authorize("admin"), rejectPayment);
 router.get("/statistics", auth, authorize("admin"), getPaymentStatistics);
+router.get("/export", auth, authorize("admin"), exportPayments);
 
 export default router;

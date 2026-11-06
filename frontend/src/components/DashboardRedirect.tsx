@@ -22,6 +22,8 @@ const DashboardRedirect: React.FC = () => {
       return <Navigate to="/admin/dashboard" replace />;
     } else if (user.role === "student") {
       return <Navigate to="/student/dashboard" replace />;
+    } else if (user.role === "parent") {
+      return <Navigate to="/parent/dashboard" replace />;
     }
   }
 

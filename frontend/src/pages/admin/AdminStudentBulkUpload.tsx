@@ -32,8 +32,15 @@ const AdminStudentBulkUpload: React.FC = () => {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (selectedFile) {
-      if (!selectedFile.name.endsWith(".csv")) {
-        toast.error("Please upload a CSV file");
+      const ext = selectedFile.name.split(".").pop()?.toLowerCase();
+      if (ext === "xls") {
+        toast.error(
+          "Old .xls files are not supported. Save as Excel Workbook (.xlsx) or CSV."
+        );
+        return;
+      }
+      if (ext !== "csv" && ext !== "xlsx") {
+        toast.error("Please upload a CSV or Excel (.xlsx) file");
         return;
       }
       if (selectedFile.size > 10 * 1024 * 1024) {
@@ -66,9 +73,8 @@ const AdminStudentBulkUpload: React.FC = () => {
 
       // Fallback: create a basic template
       const templateContent = [
-        "firstName,lastName,email,phoneNumber,currentClass,dateOfBirth,gender,address,parentName,parentPhone,parentEmail",
-        "John,Doe,john.doe@email.com,08012345678,JSS 1A,2010-01-15,male,123 Main St Lagos,Mr. Doe,08098765432,parent@email.com",
-        "Jane,Smith,jane.smith@email.com,08023456789,JSS 1B,2010-03-20,female,456 Oak Ave Abuja,Mrs. Smith,08087654321,mother@email.com",
+        "firstName,lastName,middleName,email,phoneNumber,currentClass,classArm,dateOfBirth,gender,stateOfOrigin,localGovernmentArea,street,city,state,parentName,parentPhone,parentEmail",
+        "John,Doe,,john.doe@email.com,08012345678,JSS 1,A,2012-01-15,male,Lagos,Ikeja,12 Allen Avenue,Ikeja,Lagos,Mr. Doe,08098765432,parent@email.com",
       ].join("\n");
 
       const blob = new Blob([templateContent], { type: "text/csv" });
@@ -140,6 +146,51 @@ const AdminStudentBulkUpload: React.FC = () => {
     toast.success("Error report downloaded");
   };
 
+  const downloadCredentials = () => {
+    if (!uploadResult?.success.length) return;
+    const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const rows = [
+      [
+        "Student ID",
+        "Name",
+        "Class",
+        "Student Email",
+        "Student Temporary Password",
+        "Student Email Sent",
+        "Parent Email",
+        "Parent Login",
+        "Parent Temporary Password",
+      ],
+      ...uploadResult.success.map((s: any) => [
+        s.studentId,
+        s.name,
+        s.class,
+        s.email,
+        s.temporaryPassword,
+        s.welcomeEmailSent ? "yes" : "no",
+        s.parentEmail,
+        s.parentStatus === "created"
+          ? "new login"
+          : s.parentStatus === "linked"
+          ? "added to existing login"
+          : s.parentStatus === "email_in_use"
+          ? "email used by another account"
+          : "no parent email",
+        s.parentTemporaryPassword,
+      ]),
+    ];
+    const blob = new Blob([rows.map((r) => r.map(esc).join(",")).join("\n")], {
+      type: "text/csv",
+    });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `new_student_logins_${new Date().toISOString().split("T")[0]}.csv`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+    toast.success("Login details downloaded. Keep this file private.");
+  };
+
   const resetUpload = () => {
     setFile(null);
     setUploadResult(null);
@@ -204,7 +255,7 @@ const AdminStudentBulkUpload: React.FC = () => {
             {/* File Upload */}
             <div className="mb-6">
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Select CSV File
+                Select CSV or Excel File
               </label>
               <div className="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-md">
                 <div className="space-y-1 text-center">
@@ -220,14 +271,14 @@ const AdminStudentBulkUpload: React.FC = () => {
                         name="file-upload"
                         type="file"
                         className="sr-only"
-                        accept=".csv"
+                        accept=".csv,.xlsx"
                         onChange={handleFileChange}
                       />
                     </label>
                     <p className="pl-1">or drag and drop</p>
                   </div>
                   <p className="text-xs text-gray-500">
-                    CSV files only, up to 10MB
+                    CSV or Excel (.xlsx), up to 10MB
                   </p>
                   {file && (
                     <p className="text-sm text-green-600 font-medium">
@@ -335,10 +386,21 @@ const AdminStudentBulkUpload: React.FC = () => {
                   </h3>
                   <div className="mt-2 text-sm text-yellow-700">
                     <ul className="list-disc list-inside space-y-1">
-                      <li>Email addresses must be unique for each student</li>
-                      <li>Date format should be YYYY-MM-DD</li>
-                      <li>Gender should be either "male" or "female"</li>
-                      <li>All required fields must be filled</li>
+                      <li>
+                        Required: firstName, lastName, email, currentClass,
+                        dateOfBirth, gender
+                      </li>
+                      <li>Each student needs their own email address (used to log in)</li>
+                      <li>Dates: YYYY-MM-DD or DD/MM/YYYY</li>
+                      <li>Gender: male or female</li>
+                      <li>
+                        If parentEmail is filled, a parent portal login is
+                        created (brothers and sisters share one parent login)
+                      </li>
+                      <li>
+                        Login details are emailed. You can also download them
+                        after the upload.
+                      </li>
                     </ul>
                   </div>
                 </div>
@@ -381,6 +443,22 @@ const AdminStudentBulkUpload: React.FC = () => {
                 </div>
               </div>
             </div>
+
+            {uploadResult.success.length > 0 && (
+              <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-md flex flex-wrap items-center justify-between gap-3">
+                <p className="text-sm text-blue-900">
+                  Download the new students' and parents' login details in case
+                  any emails don't arrive.
+                </p>
+                <button
+                  onClick={downloadCredentials}
+                  className="inline-flex items-center px-3 py-2 text-sm font-medium rounded-md text-white bg-[#0C4A9F] hover:bg-[#0A2F66]"
+                >
+                  <Download className="h-4 w-4 mr-1" />
+                  Download login details
+                </button>
+              </div>
+            )}
 
             {uploadResult.errors.length > 0 && (
               <div className="border border-gray-200 rounded-md">

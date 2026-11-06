@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import User, { IUser } from "../models/User.js";
+import { checkPortalAccess } from "../utils/settings.js";
 
 export interface AuthRequest extends Request {
   user?: IUser;
@@ -50,6 +51,17 @@ export const auth = async (
         return res.status(401).json({
           success: false,
           message: "Account is deactivated. Please contact administrator.",
+        });
+      }
+
+
+      // Maintenance mode / role logins switched off (admins are never blocked)
+      const denied = await checkPortalAccess(user.role);
+      if (denied) {
+        return res.status(403).json({
+          success: false,
+          code: denied.code,
+          message: denied.message,
         });
       }
 

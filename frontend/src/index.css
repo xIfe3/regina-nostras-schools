@@ -14,3 +14,36 @@
     font-family: "Work Sans", sans-serif;
     font-optical-sizing: auto;
 }
+/* Printable report sheet */
+@media print {
+    @page {
+        size: A4;
+        margin: 8mm;
+    }
+
+    html,
+    body {
+        background: #fff !important;
+    }
+
+    .no-print {
+        display: none !important;
+    }
+
+    .print-sheet {
+        box-shadow: none !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        width: auto !important;
+    }
+
+    .print-sheet * {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+
+    .print-sheet table,
+    .print-sheet section {
+        break-inside: avoid;
+    }
+}

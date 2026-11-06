@@ -44,6 +44,7 @@ const AdminStudentBulkUpload = lazy(
   () => import("./pages/admin/AdminStudentBulkUpload")
 );
 const AdminProfile = lazy(() => import("./pages/admin/AdminProfile"));
+const AdminSettings = lazy(() => import("./pages/admin/AdminSettings"));
 const AdminEvents = lazy(() => import("./pages/admin/AdminEvents"));
 const AdminAnnouncements = lazy(
   () => import("./pages/admin/AdminAnnouncements")
@@ -60,6 +61,16 @@ const StudentResults = lazy(() => import("./pages/student/StudentResults"));
 const StudentPayments = lazy(() => import("./pages/student/StudentPayments"));
 const StudentCalendar = lazy(() => import("./pages/student/StudentCalendar"));
 const StudentSettings = lazy(() => import("./pages/student/StudentSettings"));
+
+// Printable report sheet (admin, student, parent)
+const ResultSheet = lazy(() => import("./pages/ResultSheet"));
+
+// Lazy load parent components for code splitting
+const ParentDashboard = lazy(() => import("./pages/parent/ParentDashboard"));
+const ParentOverview = lazy(() => import("./pages/parent/ParentOverview"));
+const ParentResults = lazy(() => import("./pages/parent/ParentResults"));
+const ParentPayments = lazy(() => import("./pages/parent/ParentPayments"));
+const ParentSettings = lazy(() => import("./pages/parent/ParentSettings"));
 
 /**
  * Main Application Component
@@ -298,6 +309,16 @@ function App() {
                   </Suspense>
                 }
               />
+              <Route
+                path="settings"
+                element={
+                  <Suspense
+                    fallback={<PageLoading text="Loading Settings..." />}
+                  >
+                    <AdminSettings />
+                  </Suspense>
+                }
+              />
             </Route>
 
             {/* Student Routes - Protected */}
@@ -384,6 +405,89 @@ function App() {
                     fallback={<PageLoading text="Loading Settings..." />}
                   >
                     <StudentSettings />
+                  </Suspense>
+                }
+              />
+            </Route>
+
+            {/* Printable report sheet - outside the dashboard layout so it prints cleanly */}
+            <Route
+              path="/results/sheet/:id"
+              element={
+                <ErrorBoundary>
+                  <ProtectedRoute allowedRoles={["admin", "student", "parent"]}>
+                    <Suspense fallback={<PageLoading text="Loading report sheet..." />}>
+                      <ResultSheet />
+                    </Suspense>
+                  </ProtectedRoute>
+                </ErrorBoundary>
+              }
+            />
+
+            {/* Parent Routes - Protected */}
+            <Route
+              path="/parent"
+              element={
+                <ErrorBoundary>
+                  <ProtectedRoute allowedRoles={["parent"]}>
+                    <Suspense
+                      fallback={
+                        <PageLoading text="Loading Parent Portal..." />
+                      }
+                    >
+                      <ParentDashboard />
+                    </Suspense>
+                  </ProtectedRoute>
+                </ErrorBoundary>
+              }
+            >
+              <Route
+                index
+                element={
+                  <Suspense
+                    fallback={<PageLoading text="Loading Overview..." />}
+                  >
+                    <ParentOverview />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="dashboard"
+                element={
+                  <Suspense
+                    fallback={<PageLoading text="Loading Overview..." />}
+                  >
+                    <ParentOverview />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="results"
+                element={
+                  <Suspense
+                    fallback={<PageLoading text="Loading Results..." />}
+                  >
+                    <ParentResults />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="payments"
+                element={
+                  <Suspense
+                    fallback={<PageLoading text="Loading Payments..." />}
+                  >
+                    <ParentPayments />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="settings"
+                element={
+                  <Suspense
+                    fallback={<PageLoading text="Loading Settings..." />}
+                  >
+                    <ParentSettings />
                   </Suspense>
                 }
               />

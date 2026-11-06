@@ -107,8 +107,6 @@ const AdminProfileSchema = new Schema<IAdminProfile>(
   }
 );
 
-// Index for efficient queries
-AdminProfileSchema.index({ userId: 1 });
 
 // Virtual for full name
 AdminProfileSchema.virtual("fullName").get(function () {

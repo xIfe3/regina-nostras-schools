@@ -292,60 +292,56 @@ const AdminPayments: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 flex items-center justify-center">
+      <div className="flex items-center justify-center h-64">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading payments...</p>
+          <div className="animate-spin rounded-full h-10 w-10 border-2 border-slate-200 border-t-[#0C4A9F] mx-auto mb-3"></div>
+          <p className="text-sm text-slate-500">Loading payments...</p>
         </div>
       </div>
     );
   }
 
+  // Last five academic sessions (academic year starts in September)
+  const sessionOptions = (() => {
+    const now = new Date();
+    const start = now.getMonth() >= 8 ? now.getFullYear() : now.getFullYear() - 1;
+    return Array.from({ length: 5 }, (_, i) => `${start - i}/${start - i + 1}`);
+  })();
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
+    <div className="px-4 sm:px-6 lg:px-8 pb-8">
       {/* Header */}
-      <div className="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 px-4 sm:px-6 lg:px-8 py-8">
-        <div className="max-w-7xl mx-auto">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="flex items-center mb-4">
-                <div className="p-3 bg-white/20 backdrop-blur-sm rounded-xl mr-4">
-                  <CreditCard className="h-8 w-8 text-white" />
-                </div>
-                <div>
-                  <h1 className="text-3xl font-bold text-white">
-                    Payment Management
-                  </h1>
-                  <p className="text-indigo-100">
-                    Monitor and manage student payments
-                  </p>
-                </div>
-              </div>
-            </div>
-            <div className="flex items-center space-x-3">
-              <button
-                onClick={exportPayments}
-                className="bg-white/20 backdrop-blur-sm border border-white/30 rounded-xl px-4 py-2 text-white hover:bg-white/30 transition-colors flex items-center"
-              >
-                <Download className="h-4 w-4 mr-2" />
-                Export
-              </button>
-              <button
-                onClick={fetchPayments}
-                className="bg-white/20 backdrop-blur-sm border border-white/30 rounded-xl px-4 py-2 text-white hover:bg-white/30 transition-colors flex items-center"
-              >
-                <RefreshCw className="h-4 w-4 mr-2" />
-                Refresh
-              </button>
-            </div>
-          </div>
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-semibold tracking-tight text-slate-900">
+            Payments
+          </h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Verify fee payments submitted by students and parents.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={fetchPayments}
+            className="inline-flex items-center rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Refresh
+          </button>
+          <button
+            onClick={exportPayments}
+            className="inline-flex items-center rounded-md bg-[#0C4A9F] px-3 py-2 text-sm font-medium text-white hover:bg-[#0A2F66]"
+          >
+            <Download className="h-4 w-4 mr-2" />
+            Export CSV
+          </button>
         </div>
       </div>
 
-      <div className="px-4 sm:px-6 lg:px-8 -mt-4 relative z-10 pb-8">
+      <div>
         {/* Filters and Search */}
-        <div className="bg-white/90 backdrop-blur-sm border border-white/30 rounded-2xl p-6 mb-8 shadow-xl">
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <div className="bg-white border border-slate-200 rounded-xl p-4 mb-6 shadow-sm">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-5 w-5" />
               <input
@@ -353,14 +349,14 @@ const AdminPayments: React.FC = () => {
                 placeholder="Search payments..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                className="w-full pl-10 pr-3 py-2 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-[#0C4A9F]/20 focus:border-[#0C4A9F]"
               />
             </div>
 
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-              className="px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              className="px-3 py-2 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-[#0C4A9F]/20 focus:border-[#0C4A9F]"
             >
               <option value="all">All Status</option>
               <option value="verified">Verified</option>
@@ -371,33 +367,32 @@ const AdminPayments: React.FC = () => {
             <select
               value={sessionFilter}
               onChange={(e) => setSessionFilter(e.target.value)}
-              className="px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              className="px-3 py-2 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-[#0C4A9F]/20 focus:border-[#0C4A9F]"
             >
               <option value="all">All Sessions</option>
-              <option value="2023/2024">2023/2024</option>
-              <option value="2022/2023">2022/2023</option>
+              {sessionOptions.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
             </select>
 
             <select
               value={termFilter}
               onChange={(e) => setTermFilter(e.target.value)}
-              className="px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              className="px-3 py-2 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-[#0C4A9F]/20 focus:border-[#0C4A9F]"
             >
               <option value="all">All Terms</option>
-              <option value="First Term">First Term</option>
-              <option value="Second Term">Second Term</option>
-              <option value="Third Term">Third Term</option>
+              <option value="first">First Term</option>
+              <option value="second">Second Term</option>
+              <option value="third">Third Term</option>
             </select>
 
-            <button className="bg-gradient-to-r from-indigo-500 to-purple-600 text-white px-6 py-3 rounded-xl hover:from-indigo-600 hover:to-purple-700 transition-all flex items-center justify-center">
-              <Filter className="h-4 w-4 mr-2" />
-              Filter
-            </button>
           </div>
         </div>
 
         {/* Payments Table */}
-        <div className="bg-white/90 backdrop-blur-sm border border-white/30 rounded-2xl shadow-xl overflow-hidden">
+        <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-200">
             <h3 className="text-lg font-semibold text-gray-900">
               Payment Records
@@ -452,7 +447,7 @@ const AdminPayments: React.FC = () => {
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center">
                           <div className="flex-shrink-0 h-10 w-10">
-                            <div className="h-10 w-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center">
+                            <div className="h-9 w-9 rounded-full bg-[#0C4A9F] flex items-center justify-center">
                               <User className="h-5 w-5 text-white" />
                             </div>
                           </div>
@@ -660,7 +655,7 @@ const AdminPayments: React.FC = () => {
                       "_blank"
                     )
                   }
-                  className="px-4 py-2 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-lg hover:from-indigo-600 hover:to-purple-700 transition-all flex items-center"
+                  className="px-4 py-2 bg-[#0C4A9F] text-white rounded-lg hover:bg-[#0A2F66] transition-all flex items-center"
                 >
                   <Receipt className="h-4 w-4 mr-2" />
                   Download Receipt

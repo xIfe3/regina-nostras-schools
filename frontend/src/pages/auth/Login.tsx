@@ -4,10 +4,12 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { motion } from "framer-motion";
-import { Eye, EyeOff, Lock, Mail, School, AlertCircle } from "lucide-react";
+import { Eye, EyeOff, Lock, Mail, AlertCircle } from "lucide-react";
 import toast from "react-hot-toast";
 import { useAuth } from "../../contexts/AuthContext";
 import Loading from "../../components/Loading";
+import { settingsAPI, PORTAL_BLOCKED_KEY } from "../../services/api";
+import type { PublicSettings } from "../../services/api";
 
 /**
  * Login form validation schema using Zod
@@ -39,6 +41,29 @@ const Login: React.FC = () => {
   const location = useLocation();
 
   const from = (location.state as any)?.from?.pathname || "/dashboard";
+
+  const [portal, setPortal] = useState<PublicSettings | null>(null);
+  // Set by the API layer when a logged-in user was signed out because the portal closed
+  const [blockedMessage] = useState<string | null>(() => {
+    const m = sessionStorage.getItem(PORTAL_BLOCKED_KEY);
+    sessionStorage.removeItem(PORTAL_BLOCKED_KEY);
+    return m;
+  });
+
+  useEffect(() => {
+    settingsAPI
+      .getPublic()
+      .then((res) => setPortal(res.data.data || null))
+      .catch(() => undefined);
+  }, []);
+
+  const access = portal?.access;
+  const closedFor = access
+    ? [
+        !access.studentLoginEnabled && "students",
+        !access.parentLoginEnabled && "parents",
+      ].filter(Boolean)
+    : [];
 
   // Redirect if already authenticated
   useEffect(() => {
@@ -86,6 +111,8 @@ const Login: React.FC = () => {
         navigate("/admin/dashboard", { replace: true });
       } else if (userData.role === "student") {
         navigate("/student/dashboard", { replace: true });
+      } else if (userData.role === "parent") {
+        navigate("/parent/dashboard", { replace: true });
       } else {
         navigate(from, { replace: true });
       }
@@ -106,7 +133,9 @@ const Login: React.FC = () => {
       } else if (error?.response?.status === 429) {
         toast.error("Too many login attempts. Please try again later.");
       } else if (error?.response?.data?.message) {
-        toast.error(error.response.data.message);
+        toast.error(error.response.data.message, { duration: 6000 });
+      } else if (error instanceof Error && error.message) {
+        toast.error(error.message);
       } else {
         toast.error("Login failed. Please try again.");
       }
@@ -133,17 +162,64 @@ const Login: React.FC = () => {
       >
         <div>
           <div className="flex justify-center">
-            <div className="bg-blue-600 p-3 rounded-full">
-              <School className="h-8 w-8 text-white" />
-            </div>
+            {portal?.school.logo ? (
+              <img
+                src={portal.school.logo}
+                alt={portal.school.name}
+                className="h-20 w-20 object-contain"
+              />
+            ) : (
+              <img
+                src="/images/logo.png"
+                alt="School logo"
+                className="h-20 w-20 object-contain"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.display = "none";
+                }}
+              />
+            )}
           </div>
           <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
             Welcome Back
           </h2>
           <p className="mt-2 text-center text-sm text-gray-600">
-            Sign in to your Regina Nostras Schools account
+            Sign in to your {portal?.school.name || "Regina Nostra Schools"} account
           </p>
         </div>
+
+        {/* Portal status from the school's system settings */}
+        {(blockedMessage || access?.maintenanceMode || closedFor.length > 0) && (
+          <div
+            role="status"
+            className={`rounded-lg border p-4 text-sm ${
+              access?.maintenanceMode
+                ? "border-amber-300 bg-amber-50 text-amber-900"
+                : "border-blue-200 bg-blue-50 text-blue-900"
+            }`}
+          >
+            <div className="flex gap-3">
+              <AlertCircle className="h-5 w-5 flex-shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                {access?.maintenanceMode ? (
+                  <>
+                    <p className="font-semibold">Portal under maintenance</p>
+                    <p>{access.maintenanceMessage}</p>
+                    <p className="text-xs opacity-80">School staff can still sign in.</p>
+                  </>
+                ) : closedFor.length > 0 ? (
+                  <>
+                    <p className="font-semibold">
+                      Sign-in is closed for {closedFor.join(" and ")}
+                    </p>
+                    <p>{access?.loginDisabledMessage}</p>
+                  </>
+                ) : (
+                  <p>{blockedMessage}</p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         <motion.form
           initial={{ opacity: 0 }}

@@ -3,10 +3,20 @@ import Result from "../models/Result.js";
 import Student from "../models/Student.js";
 import { AuthRequest } from "../middleware/auth.js";
 import { sendEmail } from "../utils/email.js";
+import { getParentContact } from "../utils/parentAccount.js";
 import {
   parseResultsFile,
-  generateResultsTemplate,
+  generateResultsTemplateCsv,
 } from "../utils/fileParser.js";
+import {
+  buildSubject,
+  buildSummary,
+  recalculatePositions,
+  notifyResultPublished,
+} from "../utils/resultHelpers.js";
+import mongoose from "mongoose";
+import Parent from "../models/Parent.js";
+import { getSettings } from "../utils/settings.js";
 import { cleanupFile } from "../utils/localUpload.js";
 import path from "path";
 import fs from "fs";
@@ -310,108 +320,66 @@ export const createResult = async (req: AuthRequest, res: Response) => {
 // @access  Private/Admin
 export const updateResult = async (req: AuthRequest, res: Response) => {
   try {
-    const resultData = req.body;
-
-    // Recalculate scores and grades if subjects are updated
-    if (resultData.subjects && Array.isArray(resultData.subjects)) {
-      resultData.subjects = resultData.subjects.map((subject: any) => {
-        const { firstCA = 0, secondCA = 0, thirdCA = 0, exam } = subject.scores;
-        const total = firstCA + secondCA + thirdCA + exam;
-
-        // Calculate grade based on total score
-        let grade = "F9";
-        if (total >= 80) grade = "A1";
-        else if (total >= 75) grade = "B2";
-        else if (total >= 70) grade = "B3";
-        else if (total >= 65) grade = "C4";
-        else if (total >= 60) grade = "C5";
-        else if (total >= 55) grade = "C6";
-        else if (total >= 50) grade = "D7";
-        else if (total >= 45) grade = "E8";
-
-        // Generate remark based on grade
-        let remark = "Fail";
-        if (grade === "A1") remark = "Excellent";
-        else if (["B2", "B3"].includes(grade)) remark = "Very Good";
-        else if (["C4", "C5", "C6"].includes(grade)) remark = "Good";
-        else if (grade === "D7") remark = "Pass";
-        else if (grade === "E8") remark = "Poor";
-
-        return {
-          ...subject,
-          scores: { firstCA, secondCA, thirdCA, exam, total },
-          grade,
-          remark,
-        };
-      });
-
-      // Recalculate summary
-      const totalScore = resultData.subjects.reduce(
-        (sum: number, subject: any) => sum + subject.scores.total,
-        0
-      );
-      const averageScore =
-        Math.round((totalScore / resultData.subjects.length) * 100) / 100;
-
-      let overallGrade = "F9";
-      if (averageScore >= 80) overallGrade = "A1";
-      else if (averageScore >= 75) overallGrade = "B2";
-      else if (averageScore >= 70) overallGrade = "B3";
-      else if (averageScore >= 65) overallGrade = "C4";
-      else if (averageScore >= 60) overallGrade = "C5";
-      else if (averageScore >= 55) overallGrade = "C6";
-      else if (averageScore >= 50) overallGrade = "D7";
-      else if (averageScore >= 45) overallGrade = "E8";
-
-      let summaryRemark = "Poor Performance";
-      if (overallGrade === "A1") summaryRemark = "Excellent Performance";
-      else if (["B2", "B3"].includes(overallGrade))
-        summaryRemark = "Very Good Performance";
-      else if (["C4", "C5", "C6"].includes(overallGrade))
-        summaryRemark = "Good Performance";
-      else if (overallGrade === "D7") summaryRemark = "Fair Performance";
-      else if (overallGrade === "E8")
-        summaryRemark = "Below Average Performance";
-
-      if (resultData.summary) {
-        resultData.summary = {
-          ...resultData.summary,
-          totalScore,
-          averageScore,
-          overallGrade,
-          remark: summaryRemark,
-        };
-      }
-    }
-
-    const result = await Result.findByIdAndUpdate(
-      req.params.id,
-      {
-        ...resultData,
-        publishedBy: req.user!._id,
-      },
-      {
-        new: true,
-        runValidators: true,
-      }
-    )
-      .populate(
-        "studentId",
-        "studentId personalInfo.firstName personalInfo.lastName"
-      )
-      .populate("publishedBy", "email");
-
-    if (!result) {
+    const existing = await Result.findById(req.params.id);
+    if (!existing) {
       return res.status(404).json({
         success: false,
         message: "Result not found",
       });
     }
 
+    // Only allow editing result content; never the owner, publisher or id
+    const {
+      _id,
+      studentId,
+      publishedBy,
+      createdAt,
+      updatedAt,
+      __v,
+      isPublished,
+      publishedAt,
+      ...resultData
+    } = req.body || {};
+
+    if (resultData.subjects && Array.isArray(resultData.subjects)) {
+      resultData.subjects = resultData.subjects.map(buildSubject);
+      const summary = buildSummary(resultData.subjects);
+      resultData.summary = {
+        ...(existing.summary as any)?.toObject?.(),
+        ...summary,
+        position: existing.summary.position,
+        totalStudents: existing.summary.totalStudents,
+      };
+    } else {
+      delete resultData.summary;
+    }
+
+    const result = await Result.findByIdAndUpdate(req.params.id, resultData, {
+      new: true,
+      runValidators: true,
+    });
+
+    // Scores (or the class) may have changed, so refresh positions
+    const groups = new Set([
+      `${existing.academicSession}|${existing.term}|${existing.class}`,
+      `${result!.academicSession}|${result!.term}|${result!.class}`,
+    ]);
+    for (const g of groups) {
+      const [s, t, c] = g.split("|");
+      await recalculatePositions(s, t, c);
+    }
+
+    const populated = await Result.findById(req.params.id)
+      .populate(
+        "studentId",
+        "studentId personalInfo.firstName personalInfo.lastName academicInfo.currentClass"
+      )
+      .populate("publishedBy", "email");
+
     res.status(200).json({
       success: true,
       message: "Result updated successfully",
-      data: result,
+      data: populated,
     });
   } catch (error) {
     console.error("Update result error:", error);
@@ -430,20 +398,18 @@ export const toggleResultPublication = async (
   res: Response
 ) => {
   try {
-    const { isPublished } = req.body;
+    const isPublished = req.body?.isPublished === true;
 
     const result = await Result.findByIdAndUpdate(
       req.params.id,
-      {
-        isPublished,
-        publishedAt: isPublished ? new Date() : undefined,
-        publishedBy: req.user!._id,
-      },
+      isPublished
+        ? { isPublished: true, publishedAt: new Date(), publishedBy: req.user!._id }
+        : { isPublished: false, $unset: { publishedAt: 1 } },
       { new: true }
     )
       .populate(
         "studentId",
-        "studentId personalInfo.firstName personalInfo.lastName contactInfo.email"
+        "studentId personalInfo.firstName personalInfo.lastName academicInfo.currentClass"
       )
       .populate("publishedBy", "email");
 
@@ -454,37 +420,14 @@ export const toggleResultPublication = async (
       });
     }
 
-    // Send notification email if publishing
-    if (isPublished) {
-      try {
-        const student = result.studentId as any;
-        await sendEmail({
-          to: student.contactInfo.email,
-          subject: "New Result Published - Regina Nostras Schools",
-          html: `
-            <h2>New Result Available</h2>
-            <p>Dear ${student.personalInfo.firstName} ${student.personalInfo.lastName},</p>
-            <p>Your result for ${result.academicSession} academic session, ${result.term} term has been published.</p>
-            <p><strong>Class:</strong> ${result.class}</p>
-            <p><strong>Overall Grade:</strong> ${result.summary.overallGrade}</p>
-            <p><strong>Position:</strong> ${result.summary.position} out of ${result.summary.totalStudents}</p>
-            <p>Please login to the student portal to view your complete result.</p>
-            <p>Portal URL: ${process.env.FRONTEND_URL}/student/dashboard</p>
-            <br>
-            <p>Best regards,<br>Regina Nostras Schools Administration</p>
-          `,
-        });
-      } catch (emailError) {
-        console.error("Failed to send result notification email:", emailError);
-        // Don't fail the entire operation if email fails
-      }
+    // Email student and parent in the background
+    if (isPublished && req.body?.notify !== false) {
+      notifyResultPublished(String(result._id)).catch(() => undefined);
     }
 
     res.status(200).json({
       success: true,
-      message: `Result ${
-        isPublished ? "published" : "unpublished"
-      } successfully`,
+      message: `Result ${isPublished ? "published" : "unpublished"} successfully`,
       data: result,
     });
   } catch (error) {
@@ -492,6 +435,73 @@ export const toggleResultPublication = async (
     res.status(500).json({
       success: false,
       message: "Server error updating result publication status",
+    });
+  }
+};
+
+// @desc    Publish or unpublish many results at once
+// @route   POST /api/results/publish
+// @access  Private/Admin
+// @body    { resultIds?: string[], academicSession?, term?, class?, isPublished: boolean, notify?: boolean }
+export const publishResults = async (req: AuthRequest, res: Response) => {
+  try {
+    const { resultIds, academicSession, term } = req.body || {};
+    const className = req.body?.class;
+    const isPublished = req.body?.isPublished !== false;
+    const notify = req.body?.notify !== false;
+
+    const query: any = {};
+    if (Array.isArray(resultIds) && resultIds.length > 0) {
+      const ids = resultIds.filter((id: string) => mongoose.isValidObjectId(id));
+      if (ids.length === 0) {
+        return res.status(400).json({ success: false, message: "No valid result IDs given" });
+      }
+      query._id = { $in: ids };
+    } else {
+      if (!academicSession || !term) {
+        return res.status(400).json({
+          success: false,
+          message: "Choose the results to publish: give resultIds, or academicSession and term (and optionally class)",
+        });
+      }
+      query.academicSession = academicSession;
+      query.term = term;
+      if (className) query.class = className;
+    }
+
+    // Only touch results whose state actually changes
+    query.isPublished = !isPublished;
+    const toChange = await Result.find(query).select("_id");
+    const ids = toChange.map((r) => r._id);
+
+    if (ids.length > 0) {
+      await Result.updateMany(
+        { _id: { $in: ids } },
+        isPublished
+          ? { $set: { isPublished: true, publishedAt: new Date(), publishedBy: req.user!._id } }
+          : { $set: { isPublished: false }, $unset: { publishedAt: 1 } }
+      );
+    }
+
+    if (isPublished && notify && ids.length > 0) {
+      // Send emails one after another in the background so the request returns quickly
+      (async () => {
+        for (const id of ids) await notifyResultPublished(String(id));
+      })().catch(() => undefined);
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `${ids.length} result(s) ${isPublished ? "published" : "unpublished"}${
+        isPublished && notify && ids.length > 0 ? ". Students and parents are being emailed." : "."
+      }`,
+      data: { changed: ids.length },
+    });
+  } catch (error) {
+    console.error("Bulk publish error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error publishing results",
     });
   }
 };
@@ -510,6 +520,8 @@ export const deleteResult = async (req: AuthRequest, res: Response) => {
       });
     }
 
+    await recalculatePositions(result.academicSession, result.term, result.class);
+
     res.status(200).json({
       success: true,
       message: "Result deleted successfully",
@@ -522,6 +534,7 @@ export const deleteResult = async (req: AuthRequest, res: Response) => {
     });
   }
 };
+
 
 // @desc    Get available academic sessions and terms
 // @route   GET /api/results/sessions-terms
@@ -645,12 +658,13 @@ export const getResultStatistics = async (req: AuthRequest, res: Response) => {
 // @desc    Upload bulk results from file
 // @route   POST /api/results/bulk-upload
 // @access  Private/Admin
+// @body    multipart: file (.xlsx/.csv), replaceExisting ("true" to overwrite existing results)
 export const bulkUploadResults = async (req: AuthRequest, res: Response) => {
   try {
     if (!req.file) {
       return res.status(400).json({
         success: false,
-        message: "Please upload a file (Excel or CSV format)",
+        message: "Please upload a file (Excel .xlsx or CSV)",
       });
     }
 
@@ -658,238 +672,136 @@ export const bulkUploadResults = async (req: AuthRequest, res: Response) => {
       .extname(req.file.originalname)
       .toLowerCase()
       .substring(1);
+    const replaceExisting = String(req.body?.replaceExisting) === "true";
 
-    if (!["xlsx", "xls", "csv"].includes(fileExtension)) {
-      return res.status(400).json({
-        success: false,
-        message: "File must be Excel (.xlsx, .xls) or CSV format",
-      });
-    }
-
-    // Parse the uploaded file
     const parseResult = await parseResultsFile(req.file.path, fileExtension);
-
-    const createdResults = [];
-    const finalErrors = [...parseResult.errors];
-
-    // Process successfully parsed data
-    for (const resultData of parseResult.success) {
-      try {
-        // Validate academic session, term, and class from CSV data
-        const { academicSession, term, class: className } = resultData;
-
-        // Validate session format
-        if (!/^\d{4}\/\d{4}$/.test(academicSession)) {
-          finalErrors.push({
-            row: 0,
-            studentId: resultData.studentId,
-            error: "Academic session must be in format YYYY/YYYY",
-          });
-          continue;
-        }
-
-        // Validate term
-        if (!["first", "second", "third"].includes(term)) {
-          finalErrors.push({
-            row: 0,
-            studentId: resultData.studentId,
-            error: "Term must be first, second, or third",
-          });
-          continue;
-        }
-
-        // Find student
-        const student = await Student.findOne({
-          studentId: resultData.studentId,
-        });
-        if (!student) {
-          finalErrors.push({
-            row: 0,
-            studentId: resultData.studentId,
-            error: "Student not found",
-          });
-          continue;
-        }
-
-        // Check if result already exists
-        const existingResult = await Result.findOne({
-          studentId: student._id,
-          academicSession,
-          term,
-        });
-
-        if (existingResult) {
-          finalErrors.push({
-            row: 0,
-            studentId: resultData.studentId,
-            error: `Result already exists for ${academicSession} ${term} term`,
-          });
-          continue;
-        }
-
-        // Calculate scores and grades for each subject
-        const processedSubjects = resultData.subjects.map((subject) => {
-          const scores = subject.scores || {};
-          const { firstCA = 0, secondCA = 0, thirdCA = 0, exam = 0 } = scores;
-
-          // Check if total is provided in the scores object, otherwise calculate it
-          const providedTotal = (scores as any).total;
-          const finalTotal =
-            providedTotal !== null && providedTotal !== undefined
-              ? providedTotal
-              : firstCA + secondCA + thirdCA + exam;
-
-          // Calculate grade based on total score
-          let grade = "F9";
-          if (finalTotal >= 80) grade = "A1";
-          else if (finalTotal >= 75) grade = "B2";
-          else if (finalTotal >= 70) grade = "B3";
-          else if (finalTotal >= 65) grade = "C4";
-          else if (finalTotal >= 60) grade = "C5";
-          else if (finalTotal >= 55) grade = "C6";
-          else if (finalTotal >= 50) grade = "D7";
-          else if (finalTotal >= 45) grade = "E8";
-
-          // Generate remark based on grade
-          let remark = "Fail";
-          if (grade === "A1") remark = "Excellent";
-          else if (["B2", "B3"].includes(grade)) remark = "Very Good";
-          else if (["C4", "C5", "C6"].includes(grade)) remark = "Good";
-          else if (grade === "D7") remark = "Pass";
-          else if (grade === "E8") remark = "Poor";
-
-          return {
-            subjectName: subject.subjectName,
-            subjectCode: subject.subjectCode,
-            scores: { firstCA, secondCA, thirdCA, exam, total: finalTotal },
-            grade,
-            remark,
-          };
-        });
-
-        // Calculate summary
-        const totalScore = processedSubjects.reduce(
-          (sum, subject) => sum + subject.scores.total,
-          0
-        );
-        const averageScore =
-          Math.round((totalScore / processedSubjects.length) * 100) / 100;
-
-        let overallGrade = "F9";
-        if (averageScore >= 80) overallGrade = "A1";
-        else if (averageScore >= 75) overallGrade = "B2";
-        else if (averageScore >= 70) overallGrade = "B3";
-        else if (averageScore >= 65) overallGrade = "C4";
-        else if (averageScore >= 60) overallGrade = "C5";
-        else if (averageScore >= 55) overallGrade = "C6";
-        else if (averageScore >= 50) overallGrade = "D7";
-        else if (averageScore >= 45) overallGrade = "E8";
-
-        let summaryRemark = "Poor Performance";
-        if (overallGrade === "A1") summaryRemark = "Excellent Performance";
-        else if (["B2", "B3"].includes(overallGrade))
-          summaryRemark = "Very Good Performance";
-        else if (["C4", "C5", "C6"].includes(overallGrade))
-          summaryRemark = "Good Performance";
-        else if (overallGrade === "D7") summaryRemark = "Fair Performance";
-        else if (overallGrade === "E8")
-          summaryRemark = "Below Average Performance";
-
-        // Create result
-        const result = await Result.create({
-          studentId: student._id,
-          academicSession,
-          term,
-          class: className,
-          subjects: processedSubjects,
-          summary: {
-            totalScore,
-            averageScore,
-            overallGrade,
-            position: 1, // Will be calculated later
-            totalStudents: 1, // Will be calculated later
-            remark: summaryRemark,
-          },
-          attendance: resultData.attendance || {
-            schoolOpened: 0,
-            timesPresent: 0,
-            timesAbsent: 0,
-          },
-          behavioralAssessment: resultData.behavioralAssessment,
-          teacherComments: resultData.teacherComments,
-          principalComments: resultData.principalComments,
-          nextTermBegins: resultData.nextTermBegins,
-          publishedBy: req.user!._id,
-          isPublished: false, // Initially unpublished
-        });
-
-        createdResults.push(result);
-      } catch (error) {
-        finalErrors.push({
-          row: 0,
-          studentId: resultData.studentId,
-          error: `Error creating result: ${(error as Error).message}`,
-        });
-      }
-    }
-
-    // Calculate positions for all results in this class, session, and term
-    if (createdResults.length > 0) {
-      try {
-        // Use the last processed resultData for academicSession and className
-        const lastResultData =
-          parseResult.success[parseResult.success.length - 1];
-        const academicSession = lastResultData?.academicSession;
-        const className = lastResultData?.class;
-        const term = lastResultData?.term;
-
-        const allResults = await Result.find({
-          academicSession: academicSession,
-          term: term,
-          class: className,
-        }).sort({ "summary.averageScore": -1 });
-
-        const totalStudents = allResults.length;
-
-        // Update positions
-        for (let i = 0; i < allResults.length; i++) {
-          await Result.findByIdAndUpdate(allResults[i]._id, {
-            "summary.position": i + 1,
-            "summary.totalStudents": totalStudents,
-          });
-        }
-      } catch (error) {
-        console.error("Error updating positions:", error);
-        // Don't fail the entire operation
-      }
-    }
-
-    // Clean up uploaded file
     cleanupFile(req.file.path);
 
+    const errors = [...parseResult.errors];
+    const saved: Array<{
+      id: string;
+      row: number;
+      studentId: string;
+      studentName: string;
+      class: string;
+      averageScore: number;
+      overallGrade: string;
+      replaced: boolean;
+    }> = [];
+    const touchedGroups = new Set<string>();
+
+    for (const data of parseResult.success) {
+      try {
+        const student = await Student.findOne({ studentId: data.studentId });
+        if (!student) {
+          errors.push({ row: data.rowNumber, studentId: data.studentId, error: "No student with this Student ID exists" });
+          continue;
+        }
+
+        const subjects = data.subjects.map(buildSubject);
+        const summary = buildSummary(subjects);
+
+        const content = {
+          class: data.class,
+          subjects,
+          summary: { ...summary, position: 1, totalStudents: 1 },
+          attendance: data.attendance || { schoolOpened: 0, timesPresent: 0, timesAbsent: 0 },
+          behavioralAssessment: data.behavioralAssessment,
+          teacherComments: data.teacherComments,
+          principalComments: data.principalComments,
+          nextTermBegins: data.nextTermBegins,
+        };
+
+        const existing = await Result.findOne({
+          studentId: student._id,
+          academicSession: data.academicSession,
+          term: data.term,
+        });
+
+        let doc;
+        if (existing) {
+          if (!replaceExisting) {
+            errors.push({
+              row: data.rowNumber,
+              studentId: data.studentId,
+              error: `A result already exists for ${data.academicSession} ${data.term} term. Tick "Replace existing results" to overwrite it.`,
+            });
+            continue;
+          }
+          // Remember the old class so its positions are refreshed too
+          touchedGroups.add(`${existing.academicSession}|${existing.term}|${existing.class}`);
+          existing.set(content);
+          doc = await existing.save();
+        } else {
+          doc = await Result.create({
+            ...content,
+            studentId: student._id,
+            academicSession: data.academicSession,
+            term: data.term,
+            publishedBy: req.user!._id,
+            isPublished: false, // saved as draft; admin publishes after review
+          });
+        }
+
+        touchedGroups.add(`${data.academicSession}|${data.term}|${data.class}`);
+        saved.push({
+          id: String(doc._id),
+          row: data.rowNumber,
+          studentId: data.studentId,
+          studentName: `${student.personalInfo.firstName} ${student.personalInfo.lastName}`,
+          class: data.class,
+          averageScore: summary.averageScore,
+          overallGrade: summary.overallGrade,
+          replaced: !!existing,
+        });
+      } catch (error) {
+        errors.push({
+          row: data.rowNumber,
+          studentId: data.studentId,
+          error: `Could not save result: ${(error as Error).message}`,
+        });
+      }
+    }
+
+    // Refresh class positions for every class/session/term touched by this upload
+    for (const g of touchedGroups) {
+      const [s, t, c] = g.split("|");
+      try {
+        await recalculatePositions(s, t, c);
+      } catch (error) {
+        console.error("Error updating positions:", error);
+      }
+    }
+
+    errors.sort((a, b) => a.row - b.row);
+    const created = saved.filter((s) => !s.replaced).length;
+    const replaced = saved.length - created;
+
     res.status(200).json({
-      success: true,
-      message: `Bulk upload completed. ${createdResults.length} results created successfully.`,
+      success: saved.length > 0 || errors.length === 0,
+      message:
+        saved.length > 0
+          ? `${saved.length} result(s) saved as drafts${replaced ? ` (${replaced} replaced)` : ""}. Review them and publish when ready.`
+          : "No results were saved. Fix the errors and upload again.",
       data: {
-        totalProcessed: parseResult.success.length,
-        successfulUploads: createdResults.length,
-        errors: finalErrors,
-        results: createdResults.map((r, index) => ({
-          id: r._id,
-          studentId: parseResult.success[index]?.studentId || "Unknown",
-          averageScore: r.summary.averageScore,
-          overallGrade: r.summary.overallGrade,
-        })),
+        totalRows: parseResult.success.length + parseResult.errors.length,
+        totalProcessed: parseResult.success.length + parseResult.errors.length,
+        successfulUploads: saved.length,
+        created,
+        replaced,
+        errors,
+        results: saved,
+        groups: Array.from(touchedGroups).map((g) => {
+          const [academicSession, term, className] = g.split("|");
+          return { academicSession, term, class: className };
+        }),
       },
     });
   } catch (error) {
     console.error("Bulk upload error:", error);
-
-    // Clean up uploaded file in case of error
     if (req.file && req.file.path) {
       cleanupFile(req.file.path);
     }
-
     res.status(500).json({
       success: false,
       message: "Server error during bulk upload",
@@ -897,23 +809,51 @@ export const bulkUploadResults = async (req: AuthRequest, res: Response) => {
   }
 };
 
-// @desc    Download bulk upload template
-// @route   GET /api/results/bulk-template
+// @desc    Download bulk upload template (CSV). With ?class=, one row per student in that class is pre-filled.
+// @route   GET /api/results/bulk-template?class=&academicSession=&term=&subjects=Maths,English
 // @access  Private/Admin
 export const downloadBulkTemplate = async (req: AuthRequest, res: Response) => {
   try {
-    const template = await generateResultsTemplate();
+    const className = String(req.query?.class || "").trim();
+    const academicSession = String(req.query?.academicSession || "").trim();
+    const term = String(req.query?.term || "").trim();
+    const subjects = String(req.query?.subjects || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
 
-    res.setHeader(
-      "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    );
+    let students: Array<{ studentId: string; name: string; className: string }> | undefined;
+    if (className) {
+      const docs = await Student.find({
+        "academicInfo.currentClass": className,
+        "academicInfo.status": "active",
+      })
+        .select("studentId personalInfo.firstName personalInfo.lastName academicInfo.currentClass")
+        .sort({ "personalInfo.lastName": 1, "personalInfo.firstName": 1 });
+
+      students = docs.map((d) => ({
+        studentId: d.studentId,
+        name: `${d.personalInfo.lastName} ${d.personalInfo.firstName}`,
+        className: d.academicInfo.currentClass,
+      }));
+
+      if (students.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: `No active students found in class "${className}"`,
+        });
+      }
+    }
+
+    const csv = generateResultsTemplateCsv({ students, academicSession, term, subjects });
+    const safeName = (className || "sample").replace(/[^a-z0-9]+/gi, "_");
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader(
       "Content-Disposition",
-      "attachment; filename=bulk-results-template.xlsx"
+      `attachment; filename="results_template_${safeName}.csv"`
     );
-
-    res.send(template);
+    res.send(csv);
   } catch (error) {
     console.error("Download template error:", error);
     res.status(500).json({
@@ -922,6 +862,7 @@ export const downloadBulkTemplate = async (req: AuthRequest, res: Response) => {
     });
   }
 };
+
 
 // @desc    Generate result sheet PDF
 // @route   POST /api/results/generate-sheet
@@ -1142,7 +1083,8 @@ export const sendResultNotification = async (
 
     const result = await Result.findById(resultId).populate({
       path: "studentId",
-      select: "studentId personalInfo academicInfo contactInfo",
+      select:
+        "studentId personalInfo academicInfo contactInfo parentGuardianInfo",
     });
 
     if (!result) {
@@ -1153,8 +1095,7 @@ export const sendResultNotification = async (
     }
 
     const student = result.studentId as any;
-    const parentEmail =
-      student.contactInfo?.parentEmail || student.contactInfo?.guardianEmail;
+    const parentEmail = getParentContact(student)?.email;
 
     if (!parentEmail) {
       return res.status(400).json({
@@ -1339,5 +1280,58 @@ export const sendResultNotification = async (
       success: false,
       message: "Server error sending result notification",
     });
+  }
+};
+
+// @desc    Everything needed to render a printable report sheet (result, student, letterhead)
+// @route   GET /api/results/:id/sheet
+// @access  Private: admin (any result), student (own published), parent (own child's published)
+export const getResultSheet = async (req: AuthRequest, res: Response) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(404).json({ success: false, message: "Result not found" });
+    }
+
+    const result = await Result.findById(req.params.id).select("-publishedBy");
+    if (!result) {
+      return res.status(404).json({ success: false, message: "Result not found" });
+    }
+
+    const role = req.user!.role;
+    if (role !== "admin") {
+      let allowed = false;
+      if (role === "student") {
+        const me = await Student.findOne({ userId: req.user!._id }).select("_id");
+        allowed = !!me && String(me._id) === String(result.studentId);
+      } else if (role === "parent") {
+        const parent = await Parent.findOne({
+          userId: req.user!._id,
+          children: result.studentId,
+        }).select("_id");
+        allowed = !!parent;
+      }
+      // Drafts are only visible to the school
+      if (!allowed || !result.isPublished) {
+        return res.status(404).json({ success: false, message: "Result not found" });
+      }
+    }
+
+    const student = await Student.findById(result.studentId).select(
+      "studentId personalInfo.firstName personalInfo.lastName personalInfo.middleName personalInfo.gender personalInfo.dateOfBirth personalInfo.profilePhoto academicInfo.currentClass academicInfo.classArm"
+    );
+    const settings = await getSettings();
+
+    res.status(200).json({
+      success: true,
+      data: {
+        result,
+        student,
+        school: settings.school,
+        sheet: settings.resultSheet,
+      },
+    });
+  } catch (error) {
+    console.error("Get result sheet error:", error);
+    res.status(500).json({ success: false, message: "Server error getting result sheet" });
   }
 };

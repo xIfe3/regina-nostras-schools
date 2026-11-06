@@ -3,6 +3,8 @@ import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import User from "../models/User";
 import Student from "../models/Student";
+import Parent from "../models/Parent";
+import { checkPortalAccess } from "../utils/settings";
 import { AuthRequest } from "../middleware/auth";
 import { sendEmail } from "../utils/email";
 import { ActivityLogger } from "../utils/activityLogger.js";
@@ -45,6 +47,16 @@ export const login = async (req: AuthRequest, res: Response) => {
       });
     }
 
+    // Maintenance mode / role logins switched off (admins are never blocked)
+    const denied = await checkPortalAccess(user.role);
+    if (denied) {
+      return res.status(403).json({
+        success: false,
+        code: denied.code,
+        message: denied.message,
+      });
+    }
+
     // Update last login
     user.lastLogin = new Date();
     await user.save();
@@ -72,6 +84,21 @@ export const login = async (req: AuthRequest, res: Response) => {
     if (user.role === "student") {
       const student = await Student.findOne({ userId: user._id });
       userData.student = student;
+    }
+
+    if (user.role === "parent") {
+      const parent = await Parent.findOne({ userId: user._id }).populate(
+        "children",
+        "studentId personalInfo.firstName personalInfo.lastName personalInfo.profilePhoto academicInfo.currentClass academicInfo.classArm academicInfo.status"
+      );
+      userData.parent = parent
+        ? {
+            _id: parent._id,
+            name: parent.name,
+            phoneNumber: parent.phoneNumber,
+            children: parent.children,
+          }
+        : null;
     }
 
     res.status(200).json({
@@ -106,6 +133,21 @@ export const getMe = async (req: AuthRequest, res: Response) => {
     if (user!.role === "student") {
       const student = await Student.findOne({ userId: user!._id });
       userData.student = student;
+    }
+
+    if (user!.role === "parent") {
+      const parent = await Parent.findOne({ userId: user!._id }).populate(
+        "children",
+        "studentId personalInfo.firstName personalInfo.lastName personalInfo.profilePhoto academicInfo.currentClass academicInfo.classArm academicInfo.status"
+      );
+      userData.parent = parent
+        ? {
+            _id: parent._id,
+            name: parent.name,
+            phoneNumber: parent.phoneNumber,
+            children: parent.children,
+          }
+        : null;
     }
 
     res.status(200).json({
@@ -201,6 +243,16 @@ export const forgotPassword = async (req: AuthRequest, res: Response) => {
       return res.status(401).json({
         success: false,
         message: "Account is deactivated. Please contact administrator.",
+      });
+    }
+
+    // Maintenance mode / role logins switched off (admins are never blocked)
+    const denied = await checkPortalAccess(user.role);
+    if (denied) {
+      return res.status(403).json({
+        success: false,
+        code: denied.code,
+        message: denied.message,
       });
     }
 
@@ -355,6 +407,16 @@ export const resetPassword = async (req: AuthRequest, res: Response) => {
       req
     );
 
+    // Password is changed, but don't log them in while the portal is closed
+    const resetDenied = await checkPortalAccess(user.role);
+    if (resetDenied) {
+      return res.status(403).json({
+        success: false,
+        code: resetDenied.code,
+        message: `Your password has been changed. ${resetDenied.message}`,
+      });
+    }
+
     // Generate new JWT token for immediate login
     const token = generateToken(user._id);
 
@@ -369,6 +431,21 @@ export const resetPassword = async (req: AuthRequest, res: Response) => {
     if (user.role === "student") {
       const student = await Student.findOne({ userId: user._id });
       userData.student = student;
+    }
+
+    if (user.role === "parent") {
+      const parent = await Parent.findOne({ userId: user._id }).populate(
+        "children",
+        "studentId personalInfo.firstName personalInfo.lastName personalInfo.profilePhoto academicInfo.currentClass academicInfo.classArm academicInfo.status"
+      );
+      userData.parent = parent
+        ? {
+            _id: parent._id,
+            name: parent.name,
+            phoneNumber: parent.phoneNumber,
+            children: parent.children,
+          }
+        : null;
     }
 
     res.status(200).json({
