@@ -7,6 +7,7 @@ import { AuthRequest } from "../middleware/auth.js";
 import { ActivityLogger } from "../utils/activityLogger.js";
 import { uploadFile } from "../utils/storage.js";
 import { sendEmail } from "../utils/email.js";
+import { siteUrl } from "../utils/siteUrl.js";
 
 // @desc    Get all announcements (public view)
 // @route   GET /api/announcements/public
@@ -756,7 +757,7 @@ const sendAnnouncementNotifications = async (announcement: IAnnouncement) => {
             <p><strong>Published:</strong> ${announcement.publishDate}</p>
             <hr>
             <p>${announcement.excerpt}</p>
-            <p><a href="${process.env.FRONTEND_URL}/announcements/${announcement._id}">Read Full Announcement</a></p>
+            <p><a href="${siteUrl()}/announcements/${announcement._id}">Read Full Announcement</a></p>
           `,
         });
       } catch (emailError) {

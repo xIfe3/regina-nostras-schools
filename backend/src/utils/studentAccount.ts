@@ -3,6 +3,7 @@ import User from "../models/User";
 import Student, { IStudent } from "../models/Student";
 import { sendEmail } from "./email";
 import { syncParentAccount, ParentLinkResult } from "./parentAccount";
+import { siteUrl } from "./siteUrl";
 
 export interface CreatedStudentAccount {
   student: IStudent;
@@ -86,7 +87,7 @@ export const createStudentAccount = async (
           <p><strong>Password:</strong> ${temporaryPassword}</p>
           <p><strong>Student ID:</strong> ${student.studentId}</p>
           <p>Please log in and change your password immediately.</p>
-          <p>Portal URL: ${process.env.FRONTEND_URL || ""}/login</p>
+          <p>Portal URL: ${siteUrl()}/login</p>
           <br>
           <p>Best regards,<br>Regina Nostras Schools Administration</p>
         `,

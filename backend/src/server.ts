@@ -1,3 +1,5 @@
+import fs from "fs";
+import path from "path";
 import express from "express";
 import mongoose from "mongoose";
 import cors from "cors";
@@ -30,11 +32,30 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Behind cPanel's LiteSpeed proxy: use X-Forwarded-For for the real client IP
+// Behind one reverse proxy (Traefik in Dokploy): use X-Forwarded-For for the real client IP
 app.set("trust proxy", 1);
 
-// Security middleware
-app.use(helmet());
+// Security middleware. The website is served from this same server, so the
+// content policy must allow Google Fonts and uploaded images (R2 / data URLs).
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        "default-src": ["'self'"],
+        "script-src": ["'self'"],
+        "style-src": ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+        "font-src": ["'self'", "data:", "https://fonts.gstatic.com"],
+        "img-src": ["'self'", "data:", "blob:", "https:"],
+        "connect-src": ["'self'"],
+        "frame-src": ["'self'", "blob:"],
+        "object-src": ["'none'"],
+        "base-uri": ["'self'"],
+        "form-action": ["'self'"],
+        "frame-ancestors": ["'self'"],
+      },
+    },
+  })
+);
 app.use(
   cors({
     // FRONTEND_URL may hold several comma-separated origins (e.g. with and without www)
@@ -111,6 +132,27 @@ app.use("/api/announcements", announcementRoutes);
 app.use("/api/parent", parentRoutes);
 app.use("/api/settings", settingsRouter);
 app.use("/api/notices", noticesRouter);
+
+// Website: serve the built React app from this same server.
+// Unknown /api paths still get the JSON 404 below.
+const frontendDist =
+  process.env.FRONTEND_DIST || path.resolve(__dirname, "../../frontend/dist");
+if (fs.existsSync(path.join(frontendDist, "index.html"))) {
+  // Hashed build files never change, so browsers may cache them for a year
+  for (const dir of ["assets", "js", "css", "img"]) {
+    app.use(
+      `/${dir}`,
+      express.static(path.join(frontendDist, dir), { immutable: true, maxAge: "1y", fallthrough: false })
+    );
+  }
+  app.use(express.static(frontendDist, { index: false, maxAge: "1h" }));
+  // Any other page (e.g. /parent/payments) is handled by the React router
+  app.get(/^\/(?!api(\/|$)).*/, (_req, res) => {
+    res.setHeader("Cache-Control", "no-cache");
+    res.sendFile(path.join(frontendDist, "index.html"));
+  });
+  console.log(`Serving website from ${frontendDist}`);
+}
 
 // Error handling middleware
 app.use(notFound);

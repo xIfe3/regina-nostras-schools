@@ -3,6 +3,7 @@ import User from "../models/User";
 import Parent from "../models/Parent";
 import { IStudent } from "../models/Student";
 import { sendEmail } from "./email";
+import { siteUrl } from "./siteUrl";
 
 export interface ParentContact {
   name: string;
@@ -28,7 +29,7 @@ export interface ParentLinkResult {
   message: string;
 }
 
-const loginUrl = () => `${process.env.FRONTEND_URL || ""}/login`;
+const loginUrl = () => `${siteUrl()}/login`;
 
 const studentName = (student: IStudent) =>
   `${student.personalInfo.firstName} ${student.personalInfo.lastName}`;

@@ -2,6 +2,7 @@ import Result from "../models/Result";
 import Student from "../models/Student";
 import { sendEmail } from "./email";
 import { getParentContact } from "./parentAccount";
+import { siteUrl } from "./siteUrl";
 
 /* WAEC-style grading used across the school */
 export const gradeFor = (score: number): string => {
@@ -132,7 +133,7 @@ export const notifyResultPublished = async (resultId: string): Promise<number> =
     if (!student) return 0;
 
     const name = `${student.personalInfo.firstName} ${student.personalInfo.lastName}`;
-    const loginUrl = `${process.env.FRONTEND_URL || ""}/login`;
+    const loginUrl = `${siteUrl()}/login`;
     const details = `
       <p><strong>Session:</strong> ${result.academicSession} &nbsp; <strong>Term:</strong> ${capitalize(result.term)}</p>
       <p><strong>Class:</strong> ${result.class}</p>

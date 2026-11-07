@@ -6,9 +6,9 @@ import type { AxiosResponse } from "axios";
  * Uses centralized environment configuration
  */
 const api = axios.create({
-  // Set VITE_API_URL (e.g. http://localhost:4000/api) to point at a local backend
-  baseURL:
-    import.meta.env.VITE_API_URL || "https://api.reginanostraschools.com/api",
+  // The website and API are served from the same server, so "/api" works in production.
+  // In development, set VITE_API_URL (e.g. http://localhost:5000/api) to reach the backend.
+  baseURL: import.meta.env.VITE_API_URL || "/api",
   timeout: 30000,
   headers: {
     "Content-Type": "application/json",

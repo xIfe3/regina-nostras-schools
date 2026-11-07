@@ -49,8 +49,22 @@ export const errorHandler = (
     error = createError(message, 401);
   }
 
+  // File uploads: too large, too many files, or a type we don't accept
+  if (err.name === "MulterError") {
+    const code = (err as any).code;
+    const message =
+      code === "LIMIT_FILE_SIZE"
+        ? "The file is too large (maximum 5MB)"
+        : "The file upload could not be processed";
+    error = createError(message, 400);
+  }
+  if (/^Invalid file type/.test(err.message || "")) {
+    error = createError(err.message, 400);
+  }
+
   res.status(error.statusCode || 500).json({
     success: false,
+    message: error.message || "Server Error",
     error: error.message || "Server Error",
     ...(process.env.NODE_ENV === "development" && { stack: err.stack }),
   });

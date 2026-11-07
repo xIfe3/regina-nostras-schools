@@ -89,6 +89,10 @@ export default defineConfig({
     port: 3000,
     host: true, // Allow external connections
     open: true, // Auto-open browser
+    // Send /api calls to the local backend (same path as in production)
+    proxy: {
+      "/api": process.env.VITE_DEV_API_TARGET || "http://localhost:5000",
+    },
   },
 
   // Preview server configuration
