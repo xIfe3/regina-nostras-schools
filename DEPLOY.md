@@ -61,7 +61,7 @@ Pick one:
 5. **Environment:** paste the variables from `backend/.env.example` with real values. You
    need at least:
    `NODE_ENV=production`, `PORT=5000`, `FRONTEND_URL`, `MONGODB_URI`, `JWT_SECRET`,
-   `JWT_EXPIRES_IN`, the `EMAIL_*` settings and all five `R2_*` settings.
+   the `EMAIL_*` settings (port 465) and all five `R2_*` settings.
 6. Click **Deploy** and watch the build log. The first build takes a few minutes.
 
 ## 5. Domain and HTTPS
