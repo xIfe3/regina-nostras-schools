@@ -8,6 +8,7 @@ import {
   rejectPayment,
   getPaymentStatistics,
   exportPayments,
+  checkStudentPayment,
 } from "../controllers/paymentController.js";
 import { auth, authorize } from "../middleware/auth.js";
 import { upload } from "../utils/cloudinary.js";
@@ -16,6 +17,7 @@ const router = express.Router();
 
 // Student routes
 router.get("/student", auth, authorize("student"), getStudentPayments);
+router.get("/check", auth, authorize("student"), checkStudentPayment);
 router.post(
   "/",
   auth,

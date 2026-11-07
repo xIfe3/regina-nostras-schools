@@ -3,6 +3,27 @@ import Payment from "../models/Payment.js";
 import Student from "../models/Student.js";
 import { AuthRequest } from "../middleware/auth.js";
 import { sendEmail } from "../utils/email.js";
+import { submitReceipt, checkExisting } from "../utils/paymentSubmission.js";
+
+const studentName = (s: any) =>
+  [s?.personalInfo?.firstName, s?.personalInfo?.lastName].filter(Boolean).join(" ");
+
+// @desc    Has this fee already been uploaded (by the student or a parent)?
+// @route   GET /api/payments/check?academicSession=&term=&paymentType=
+// @access  Private/Student
+export const checkStudentPayment = async (req: AuthRequest, res: Response) => {
+  try {
+    const student = await Student.findOne({ userId: req.user!._id });
+    if (!student) {
+      return res.status(404).json({ success: false, message: "Student profile not found" });
+    }
+    const out = await checkExisting(student._id, req.query, { userId: req.user!._id, role: "student" });
+    res.status(out.status).json(out.json);
+  } catch (error) {
+    console.error("Check payment error:", error);
+    res.status(500).json({ success: false, message: "Server error checking payment" });
+  }
+};
 
 // @desc    Get student payments
 // @route   GET /api/payments/student
@@ -71,13 +92,6 @@ export const getStudentPayments = async (req: AuthRequest, res: Response) => {
 // @access  Private/Student
 export const submitPayment = async (req: AuthRequest, res: Response) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({
-        success: false,
-        message: "Please upload a receipt image",
-      });
-    }
-
     const student = await Student.findOne({ userId: req.user!._id });
     if (!student) {
       return res.status(404).json({
@@ -86,45 +100,12 @@ export const submitPayment = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    // Check if payment already exists for the same session, term, and type
-    const existingPayment = await Payment.findOne({
-      studentId: student._id,
-      academicSession: req.body.academicSession,
-      term: req.body.term,
-      paymentType: req.body.paymentType,
-      status: { $in: ["pending", "verified"] },
+    const out = await submitReceipt(student, req.body, req.file, {
+      userId: req.user!._id,
+      role: "student",
+      name: studentName(student),
     });
-
-    if (existingPayment) {
-      return res.status(400).json({
-        success: false,
-        message: "A payment for this session, term, and type already exists",
-      });
-    }
-
-    // Create payment record with file URL (assuming multer with cloudinary is configured)
-    const payment = await Payment.create({
-      studentId: student._id,
-      academicSession: req.body.academicSession,
-      term: req.body.term,
-      paymentType: req.body.paymentType,
-      amount: req.body.amount,
-      currency: req.body.currency || "NGN",
-      paymentMethod: req.body.paymentMethod,
-      transactionReference: req.body.transactionReference,
-      bankDetails: req.body.bankDetails,
-      receiptDetails: {
-        receiptNumber: req.body.receiptNumber,
-        receiptImage: req.file.path, // This would be the cloudinary URL
-        description: req.body.description,
-      },
-    });
-
-    res.status(201).json({
-      success: true,
-      message: "Payment receipt submitted successfully. Awaiting verification.",
-      data: payment,
-    });
+    res.status(out.status).json(out.json);
   } catch (error) {
     console.error("Submit payment error:", error);
     res.status(500).json({

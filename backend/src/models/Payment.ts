@@ -34,6 +34,12 @@ export interface IPayment extends Document {
     verificationNotes?: string;
   };
   rejectionReason?: string;
+  /** Who uploaded the receipt (student or parent) */
+  submittedBy?: {
+    userId: mongoose.Types.ObjectId;
+    role: "student" | "parent" | "admin";
+    name: string;
+  };
   createdAt: Date;
   updatedAt: Date;
 }
@@ -111,6 +117,11 @@ const PaymentSchema = new Schema<IPayment>(
       verificationNotes: String,
     },
     rejectionReason: String,
+    submittedBy: {
+      userId: { type: Schema.Types.ObjectId, ref: "User" },
+      role: { type: String, enum: ["student", "parent", "admin"] },
+      name: String,
+    },
   },
   {
     timestamps: true,

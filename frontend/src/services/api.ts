@@ -400,31 +400,59 @@ export const resultAPI = {
   > => api.get("/results/sessions-terms"),
 };
 
+/** Fields that identify one fee: e.g. school fees, first term, 2026/2027 */
+export interface PaymentKey {
+  academicSession: string;
+  term: string;
+  paymentType: string;
+}
+
+export interface ExistingPayment {
+  _id: string;
+  status: "pending" | "verified" | "rejected";
+  amount: number;
+  createdAt: string;
+  submittedBy?: { role: "student" | "parent" | "admin"; name: string };
+  /** Ready-to-show notice, e.g. "School Fees for First Term 2026/2027 has already been uploaded by your parent..." */
+  message: string;
+}
+
+export interface PaymentCheckResult {
+  alreadyUploaded: boolean;
+  existing: ExistingPayment | null;
+}
+
+const receiptFormData = (data: Record<string, any>, file: File) => {
+  const formData = new FormData();
+  formData.append("receiptImage", file);
+  Object.keys(data).forEach((key) => {
+    const value = data[key];
+    if (value === undefined || value === null || value === "") return;
+    formData.append(key, typeof value === "object" ? JSON.stringify(value) : String(value));
+  });
+  return formData;
+};
+
 // Payment API
 export const paymentAPI = {
   getStudentPayments: (params?: {
     page?: number;
     limit?: number;
+    status?: string;
   }): Promise<AxiosResponse<ApiResponse<any[]>>> =>
     api.get("/payments/student", { params }),
 
+  /** Has this fee already been uploaded by the student or a parent? */
+  checkPayment: (params: PaymentKey): Promise<AxiosResponse<ApiResponse<PaymentCheckResult>>> =>
+    api.get("/payments/check", { params }),
+
   submitPayment: (
-    data: any,
+    data: Record<string, any>,
     file: File
-  ): Promise<AxiosResponse<ApiResponse<any>>> => {
-    const formData = new FormData();
-    formData.append("receiptImage", file);
-    Object.keys(data).forEach((key) => {
-      if (typeof data[key] === "object") {
-        formData.append(key, JSON.stringify(data[key]));
-      } else {
-        formData.append(key, data[key]);
-      }
-    });
-    return api.post("/payments", formData, {
+  ): Promise<AxiosResponse<ApiResponse<any>>> =>
+    api.post("/payments", receiptFormData(data, file), {
       headers: { "Content-Type": "multipart/form-data" },
-    });
-  },
+    }),
 };
 
 // School-wide settings
@@ -535,6 +563,23 @@ export const parentAPI = {
     params?: { page?: number; limit?: number; status?: string }
   ): Promise<AxiosResponse<ApiResponse<any[]>>> =>
     api.get(`/parent/children/${studentId}/payments`, { params }),
+
+  /** Has this fee already been uploaded for the child (by the child or a parent)? */
+  checkChildPayment: (
+    studentId: string,
+    params: PaymentKey
+  ): Promise<AxiosResponse<ApiResponse<PaymentCheckResult>>> =>
+    api.get(`/parent/children/${studentId}/payments/check`, { params }),
+
+  /** Upload a payment receipt for the child */
+  submitChildPayment: (
+    studentId: string,
+    data: Record<string, any>,
+    file: File
+  ): Promise<AxiosResponse<ApiResponse<any>>> =>
+    api.post(`/parent/children/${studentId}/payments`, receiptFormData(data, file), {
+      headers: { "Content-Type": "multipart/form-data" },
+    }),
 };
 
 // Admin API

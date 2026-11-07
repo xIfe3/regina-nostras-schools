@@ -5,6 +5,7 @@ import Student from "../models/Student";
 import Result from "../models/Result";
 import Payment from "../models/Payment";
 import { AuthRequest } from "../middleware/auth";
+import { submitReceipt, checkExisting } from "../utils/paymentSubmission";
 
 const CHILD_FIELDS =
   "studentId personalInfo.firstName personalInfo.lastName personalInfo.middleName personalInfo.gender personalInfo.dateOfBirth personalInfo.profilePhoto academicInfo";
@@ -230,5 +231,40 @@ export const getChildPayments = async (req: AuthRequest, res: Response) => {
       success: false,
       message: "Server error getting payments",
     });
+  }
+};
+
+// @desc    Has this fee already been uploaded for the child (by the student or a parent)?
+// @route   GET /api/parent/children/:studentId/payments/check
+// @access  Private/Parent
+export const checkChildPayment = async (req: AuthRequest, res: Response) => {
+  try {
+    const student = await getOwnedChild(req, res);
+    if (!student) return;
+    const out = await checkExisting(student._id, req.query, { userId: req.user!._id, role: "parent" });
+    res.status(out.status).json(out.json);
+  } catch (error) {
+    console.error("Check child payment error:", error);
+    res.status(500).json({ success: false, message: "Server error checking payment" });
+  }
+};
+
+// @desc    Upload a payment receipt for a child
+// @route   POST /api/parent/children/:studentId/payments
+// @access  Private/Parent
+export const submitChildPayment = async (req: AuthRequest, res: Response) => {
+  try {
+    const student = await getOwnedChild(req, res);
+    if (!student) return;
+    const parent = await Parent.findOne({ userId: req.user!._id }).select("name");
+    const out = await submitReceipt(student, req.body, req.file, {
+      userId: req.user!._id,
+      role: "parent",
+      name: parent?.name || req.user!.email,
+    });
+    res.status(out.status).json(out.json);
+  } catch (error) {
+    console.error("Submit child payment error:", error);
+    res.status(500).json({ success: false, message: "Server error submitting payment" });
   }
 };

@@ -5,7 +5,10 @@ import {
   getChildResults,
   getChildResult,
   getChildPayments,
+  checkChildPayment,
+  submitChildPayment,
 } from "../controllers/parentController.js";
+import { upload } from "../utils/cloudinary.js";
 import { auth, authorize } from "../middleware/auth.js";
 
 const router = express.Router();
@@ -18,5 +21,11 @@ router.route("/profile").get(getParentProfile).put(updateParentProfile);
 router.get("/children/:studentId/results", getChildResults);
 router.get("/children/:studentId/results/:resultId", getChildResult);
 router.get("/children/:studentId/payments", getChildPayments);
+router.get("/children/:studentId/payments/check", checkChildPayment);
+router.post(
+  "/children/:studentId/payments",
+  upload.single("receiptImage"),
+  submitChildPayment
+);
 
 export default router;

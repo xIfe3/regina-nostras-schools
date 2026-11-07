@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import api from "../../services/api";
 import toast from "react-hot-toast";
+import { openReceipt } from "../../components/payments/paymentHelpers";
 
 interface Payment {
   _id: string;
@@ -51,8 +52,16 @@ interface Payment {
     verificationNotes?: string;
   };
   rejectionReason?: string;
+  submittedBy?: { role: "student" | "parent" | "admin"; name?: string };
   createdAt: string;
 }
+
+const uploaderText = (p: Payment) => {
+  const by = p.submittedBy;
+  if (!by) return "";
+  const role = by.role === "parent" ? "Parent" : by.role === "student" ? "Student" : "School";
+  return by.name ? `${role}: ${by.name}` : role;
+};
 
 const AdminPayments: React.FC = () => {
   const [payments, setPayments] = useState<Payment[]>([]);
@@ -463,6 +472,11 @@ const AdminPayments: React.FC = () => {
                               {payment.studentId?.academicInfo?.currentClass ||
                                 "N/A"}
                             </div>
+                            {payment.submittedBy && (
+                              <div className="text-xs text-slate-400">
+                                Uploaded by {uploaderText(payment)}
+                              </div>
+                            )}
                           </div>
                         </div>
                       </td>
@@ -525,10 +539,7 @@ const AdminPayments: React.FC = () => {
                           {payment.receiptDetails?.receiptImage && (
                             <button
                               onClick={() =>
-                                window.open(
-                                  payment.receiptDetails?.receiptImage,
-                                  "_blank"
-                                )
+                                openReceipt(payment.receiptDetails?.receiptImage)
                               }
                               className="text-blue-600 hover:text-blue-900"
                               title="Download Receipt"
@@ -582,6 +593,14 @@ const AdminPayments: React.FC = () => {
                     "N/A"}
                 </p>
               </div>
+              {selectedPayment.submittedBy && (
+                <div>
+                  <label className="text-sm font-medium text-gray-500">
+                    Uploaded by
+                  </label>
+                  <p className="text-gray-900">{uploaderText(selectedPayment)}</p>
+                </div>
+              )}
 
               <div>
                 <label className="text-sm font-medium text-gray-500">
@@ -650,10 +669,7 @@ const AdminPayments: React.FC = () => {
               {selectedPayment.receiptDetails?.receiptImage && (
                 <button
                   onClick={() =>
-                    window.open(
-                      selectedPayment.receiptDetails?.receiptImage,
-                      "_blank"
-                    )
+                    openReceipt(selectedPayment.receiptDetails?.receiptImage)
                   }
                   className="px-4 py-2 bg-[#0C4A9F] text-white rounded-lg hover:bg-[#0A2F66] transition-all flex items-center"
                 >
