@@ -6,6 +6,7 @@ import { AuthRequest } from "../middleware/auth.js";
 import { sendEmail } from "../utils/email.js";
 import { ActivityLogger } from "../utils/activityLogger.js";
 import { uploadFile } from "../utils/storage.js";
+import { eventEmail } from "../utils/emailTemplates.js";
 
 // @desc    Get all events (for students)
 // @route   GET /api/events/student
@@ -672,6 +673,7 @@ const sendEventNotifications = async (event: IEvent) => {
     recipients = [...new Set(recipients)];
 
     // Send email notifications (in batches to avoid overwhelming email service)
+    const eventMail = await eventEmail(event);
     const batchSize = 50;
     for (let i = 0; i < recipients.length; i += batchSize) {
       const batch = recipients.slice(i, i + batchSize);
@@ -679,42 +681,7 @@ const sendEventNotifications = async (event: IEvent) => {
       const emailPromises = batch.map((email) =>
         sendEmail({
           to: email,
-          subject: `New Event: ${event.title}`,
-          html: `
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-              <h2 style="color: #059669;">New Event Notification</h2>
-              <div style="background-color: #f9f9f9; padding: 20px; border-radius: 8px; margin: 20px 0;">
-                <h3 style="color: #333; margin-top: 0;">${event.title}</h3>
-                <p><strong>Date:</strong> ${event.date.toLocaleDateString()}</p>
-                ${
-                  event.startTime
-                    ? `<p><strong>Time:</strong> ${event.startTime}${
-                        event.endTime ? ` - ${event.endTime}` : ""
-                      }</p>`
-                    : ""
-                }
-                ${
-                  event.location
-                    ? `<p><strong>Location:</strong> ${event.location}</p>`
-                    : ""
-                }
-                ${
-                  event.description
-                    ? `<p><strong>Description:</strong> ${event.description}</p>`
-                    : ""
-                }
-                ${
-                  event.mandatory
-                    ? '<p style="color: #dc2626; font-weight: bold;">⚠️ This event is mandatory.</p>'
-                    : ""
-                }
-                <div>
-                  <p>A new event has been published!</p>
-                  <p>Please log in to your student portal for more details and updates.</p>
-                </div>
-              </div>
-            </div>
-          `,
+          ...eventMail,
         }).catch((error) => {
           console.error(`Failed to send email to ${email}:`, error);
         })

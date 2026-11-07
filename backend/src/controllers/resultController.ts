@@ -20,6 +20,7 @@ import { getSettings } from "../utils/settings.js";
 import { cleanupFile } from "../utils/localUpload.js";
 import path from "path";
 import fs from "fs";
+import { resultFullEmail } from "../utils/emailTemplates.js";
 
 // @desc    Get student results
 // @route   GET /api/results/student
@@ -1104,165 +1105,9 @@ export const sendResultNotification = async (
       });
     }
 
-    // Email content
-    const emailSubject = `Academic Result - ${student.personalInfo?.firstName} ${student.personalInfo?.lastName} - ${result.academicSession} ${result.term} Term`;
-
-    const emailHtml = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; margin: 0; padding: 20px; }
-          .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; text-align: center; border-radius: 10px; }
-          .content { background: #f9f9f9; padding: 20px; border-radius: 10px; margin: 20px 0; }
-          .summary { background: white; padding: 15px; border-radius: 8px; margin: 15px 0; border-left: 4px solid #667eea; }
-          .subjects { width: 100%; border-collapse: collapse; margin: 15px 0; }
-          .subjects th, .subjects td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-          .subjects th { background-color: #f2f2f2; font-weight: bold; }
-          .grade-a { color: #10b981; font-weight: bold; }
-          .grade-b { color: #3b82f6; font-weight: bold; }
-          .grade-c { color: #f59e0b; font-weight: bold; }
-          .grade-d { color: #ef4444; font-weight: bold; }
-          .grade-f { color: #dc2626; font-weight: bold; }
-          .footer { text-align: center; margin-top: 30px; color: #666; font-size: 12px; }
-        </style>
-      </head>
-      <body>
-        <div class="header">
-          <h1>REGINA NOSTRA SCHOOLS</h1>
-          <h2>Academic Result Notification</h2>
-        </div>
-
-        <div class="content">
-          <h3>Dear Parent/Guardian,</h3>
-          <p>We are pleased to share the academic result for your child/ward:</p>
-
-          <div class="summary">
-            <h4>Student Information</h4>
-            <p><strong>Name:</strong> ${
-              student.personalInfo?.firstName || ""
-            } ${student.personalInfo?.lastName || ""}</p>
-            <p><strong>Student ID:</strong> ${student.studentId || "N/A"}</p>
-            <p><strong>Class:</strong> ${
-              student.academicInfo?.currentClass || "N/A"
-            }</p>
-            <p><strong>Academic Session:</strong> ${result.academicSession}</p>
-            <p><strong>Term:</strong> ${
-              result.term.charAt(0).toUpperCase() + result.term.slice(1)
-            } Term</p>
-          </div>
-
-          <div class="summary">
-            <h4>Performance Summary</h4>
-            <p><strong>Total Score:</strong> ${result.summary.totalScore}</p>
-            <p><strong>Average Score:</strong> ${result.summary.averageScore.toFixed(
-              1
-            )}%</p>
-            <p><strong>Overall Grade:</strong> <span class="grade-${result.summary.overallGrade.toLowerCase()}">${
-      result.summary.overallGrade
-    }</span></p>
-            <p><strong>Position:</strong> ${result.summary.position} out of ${
-      result.summary.totalStudents
-    } students</p>
-          </div>
-
-          <h4>Subject Breakdown</h4>
-          <table class="subjects">
-            <thead>
-              <tr>
-                <th>Subject</th>
-                <th>1st CA</th>
-                <th>2nd CA</th>
-                <th>3rd CA</th>
-                <th>Exam</th>
-                <th>Total</th>
-                <th>Grade</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${result.subjects
-                .map(
-                  (subject: any) => `
-                <tr>
-                  <td>${subject.subjectName}</td>
-                  <td>${subject.scores.firstCA || 0}</td>
-                  <td>${subject.scores.secondCA || 0}</td>
-                  <td>${subject.scores.thirdCA || 0}</td>
-                  <td>${subject.scores.exam}</td>
-                  <td>${subject.scores.total}</td>
-                  <td class="grade-${subject.grade.toLowerCase()}">${
-                    subject.grade
-                  }</td>
-                </tr>
-              `
-                )
-                .join("")}
-            </tbody>
-          </table>
-
-          <div class="summary">
-            <h4>Attendance Record</h4>
-            <p><strong>School Opened:</strong> ${
-              result.attendance.schoolOpened
-            } days</p>
-            <p><strong>Times Present:</strong> ${
-              result.attendance.timesPresent
-            } days</p>
-            <p><strong>Times Absent:</strong> ${
-              result.attendance.timesAbsent
-            } days</p>
-          </div>
-
-          ${
-            result.teacherComments
-              ? `
-            <div class="summary">
-              <h4>Class Teacher's Comment</h4>
-              <p>${result.teacherComments}</p>
-            </div>
-          `
-              : ""
-          }
-
-          ${
-            result.principalComments
-              ? `
-            <div class="summary">
-              <h4>Principal's Comment</h4>
-              <p>${result.principalComments}</p>
-            </div>
-          `
-              : ""
-          }
-
-          ${
-            result.nextTermBegins
-              ? `
-            <div class="summary">
-              <h4>Next Term Information</h4>
-              <p><strong>Next Term Begins:</strong> ${result.nextTermBegins}</p>
-            </div>
-          `
-              : ""
-          }
-
-          <p>For any inquiries regarding this result, please contact the school administration.</p>
-          <p>Thank you for your continued trust in Regina Nostra Schools.</p>
-        </div>
-
-        <div class="footer">
-          <p>This is an automated email from Regina Nostra Schools Academic Management System.</p>
-          <p>Generated on: ${new Date().toLocaleDateString()}</p>
-        </div>
-      </body>
-      </html>
-    `;
-
-    // Send email
     await sendEmail({
       to: parentEmail,
-      subject: emailSubject,
-      html: emailHtml,
+      ...(await resultFullEmail(result, student)),
     });
 
     res.status(200).json({

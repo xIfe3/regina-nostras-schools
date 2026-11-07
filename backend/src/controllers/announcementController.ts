@@ -7,7 +7,7 @@ import { AuthRequest } from "../middleware/auth.js";
 import { ActivityLogger } from "../utils/activityLogger.js";
 import { uploadFile } from "../utils/storage.js";
 import { sendEmail } from "../utils/email.js";
-import { siteUrl } from "../utils/siteUrl.js";
+import { announcementEmail } from "../utils/emailTemplates.js";
 
 // @desc    Get all announcements (public view)
 // @route   GET /api/announcements/public
@@ -742,23 +742,13 @@ const sendAnnouncementNotifications = async (announcement: IAnnouncement) => {
       users = await User.find(query).select("email role");
     }
 
-    // Send notification emails
+    // Send notification emails (same content for everyone)
+    const email = await announcementEmail(announcement);
     const emailPromises = users.map(async (user) => {
       try {
         await sendEmail({
           to: user.email,
-          subject: `[${announcement.priority.toUpperCase()}] ${
-            announcement.title
-          }`,
-          html: `
-            <h2>${announcement.title}</h2>
-            <p><strong>Category:</strong> ${announcement.category}</p>
-            <p><strong>Priority:</strong> ${announcement.priority}</p>
-            <p><strong>Published:</strong> ${announcement.publishDate}</p>
-            <hr>
-            <p>${announcement.excerpt}</p>
-            <p><a href="${siteUrl()}/announcements/${announcement._id}">Read Full Announcement</a></p>
-          `,
+          ...email,
         });
       } catch (emailError) {
         console.error(

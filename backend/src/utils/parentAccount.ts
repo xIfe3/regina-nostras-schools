@@ -3,7 +3,7 @@ import User from "../models/User";
 import Parent from "../models/Parent";
 import { IStudent } from "../models/Student";
 import { sendEmail } from "./email";
-import { siteUrl } from "./siteUrl";
+import { parentChildLinkedEmail, parentCredentialsEmail } from "./emailTemplates";
 
 export interface ParentContact {
   name: string;
@@ -28,11 +28,6 @@ export interface ParentLinkResult {
   shownOnScreen?: boolean;
   message: string;
 }
-
-const loginUrl = () => `${siteUrl()}/login`;
-
-const studentName = (student: IStudent) =>
-  `${student.personalInfo.firstName} ${student.personalInfo.lastName}`;
 
 /**
  * Pick the parent contact for a student: guardian first, then father, then mother.
@@ -64,19 +59,7 @@ const sendCredentialsEmail = async (
   try {
     await sendEmail({
       to: email,
-      subject: "Regina Nostras Schools - Parent Portal Login",
-      html: `
-        <h2>Welcome to the Regina Nostras Schools Parent Portal</h2>
-        <p>Dear ${parentName || "Parent/Guardian"},</p>
-        <p>A parent portal account has been set up for you so you can view the results and payment records of
-        <strong>${studentName(student)}</strong> (Student ID: ${student.studentId}).</p>
-        <p><strong>Email:</strong> ${email}</p>
-        <p><strong>Password:</strong> ${password}</p>
-        <p>Please log in and change your password from the Settings page.</p>
-        <p>Portal URL: <a href="${loginUrl()}">${loginUrl()}</a></p>
-        <br>
-        <p>Best regards,<br>Regina Nostras Schools Administration</p>
-      `,
+      ...(await parentCredentialsEmail(parentName, email, password, student)),
     });
     return true;
   } catch (error) {
@@ -93,15 +76,7 @@ const sendChildLinkedEmail = async (
   try {
     await sendEmail({
       to: email,
-      subject: "Regina Nostras Schools - Child added to your Parent Portal",
-      html: `
-        <p>Dear ${parentName || "Parent/Guardian"},</p>
-        <p><strong>${studentName(student)}</strong> (Student ID: ${student.studentId}) has been added to your parent portal account.</p>
-        <p>Log in with your existing parent portal password to view their results and payments.</p>
-        <p>Portal URL: <a href="${loginUrl()}">${loginUrl()}</a></p>
-        <br>
-        <p>Best regards,<br>Regina Nostras Schools Administration</p>
-      `,
+      ...(await parentChildLinkedEmail(parentName, student)),
     });
     return true;
   } catch (error) {

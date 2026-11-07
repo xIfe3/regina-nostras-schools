@@ -8,6 +8,7 @@ import { checkPortalAccess } from "../utils/settings";
 import { AuthRequest } from "../middleware/auth";
 import { sendEmail } from "../utils/email";
 import { ActivityLogger } from "../utils/activityLogger.js";
+import { passwordResetEmail } from "../utils/emailTemplates.js";
 
 // Generate JWT Token
 const generateToken = (id: string) => {
@@ -272,36 +273,7 @@ export const forgotPassword = async (req: AuthRequest, res: Response) => {
       // Send email with reset link
       await sendEmail({
         to: user.email,
-        subject: "Password Reset Request - Regina Nostras Schools",
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2 style="color: #2563eb;">Password Reset Request</h2>
-            <p>Dear User,</p>
-            <p>You have requested to reset your password for your Regina Nostras Schools account.</p>
-            <p>Please click the button below to reset your password:</p>
-
-            <div style="text-align: center; margin: 30px 0;">
-              <a href="${resetUrl}"
-                 style="background-color: #2563eb; color: white; padding: 12px 24px;
-                        text-decoration: none; border-radius: 5px; display: inline-block;">
-                Reset Password
-              </a>
-            </div>
-
-            <p>Or copy and paste this link into your browser:</p>
-            <p style="word-break: break-all; color: #2563eb;">${resetUrl}</p>
-
-            <p><strong>This link will expire in 10 minutes.</strong></p>
-
-            <p>If you did not request this password reset, please ignore this email and your password will remain unchanged.</p>
-
-            <hr style="margin: 30px 0; border: none; border-top: 1px solid #e5e7eb;">
-            <p style="font-size: 14px; color: #6b7280;">
-              Best regards,<br>
-              Regina Nostras Schools Administration
-            </p>
-          </div>
-        `,
+        ...(await passwordResetEmail(resetUrl)),
       });
 
       // Log password reset request

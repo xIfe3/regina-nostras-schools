@@ -24,6 +24,7 @@ import {
   unlinkStudentFromParents,
   ParentLinkResult,
 } from "../utils/parentAccount";
+import { notifyPaymentDecision } from "../utils/paymentNotifications";
 
 // @desc    Get all students
 // @route   GET /api/admin/students
@@ -661,31 +662,8 @@ export const verifyPayment = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    // Send confirmation email to student
-    const student = payment.studentId as any;
-    await sendEmail({
-      to: student.contactInfo.email,
-      subject: "Payment Verified - Regina Nostras Schools",
-      html: `
-        <h2>Payment Verification Confirmation</h2>
-        <p>Dear ${student.personalInfo.firstName} ${
-        student.personalInfo.lastName
-      },</p>
-        <p>Your payment has been verified successfully.</p>
-        <p><strong>Payment Details:</strong></p>
-        <ul>
-          <li>Amount: ₦${payment.amount.toLocaleString()}</li>
-          <li>Payment Type: ${payment.paymentType
-            .replace("_", " ")
-            .toUpperCase()}</li>
-          <li>Academic Session: ${payment.academicSession}</li>
-          <li>Term: ${payment.term.toUpperCase()}</li>
-        </ul>
-        <p>Thank you for your payment.</p>
-        <br>
-        <p>Best regards,<br>Regina Nostras Schools Administration</p>
-      `,
-    });
+    // Email the student and parent(s); runs in the background
+    notifyPaymentDecision(payment, payment.studentId, { verified: true });
 
     res.status(200).json({
       success: true,
@@ -731,32 +709,8 @@ export const rejectPayment = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    // Send rejection email to student
-    const student = payment.studentId as any;
-    await sendEmail({
-      to: student.contactInfo.email,
-      subject: "Payment Rejected - Regina Nostras Schools",
-      html: `
-        <h2>Payment Rejection Notice</h2>
-        <p>Dear ${student.personalInfo.firstName} ${
-        student.personalInfo.lastName
-      },</p>
-        <p>Unfortunately, your payment submission has been rejected.</p>
-        <p><strong>Rejection Reason:</strong> ${rejectionReason}</p>
-        <p><strong>Payment Details:</strong></p>
-        <ul>
-          <li>Amount: ₦${payment.amount.toLocaleString()}</li>
-          <li>Payment Type: ${payment.paymentType
-            .replace("_", " ")
-            .toUpperCase()}</li>
-          <li>Academic Session: ${payment.academicSession}</li>
-          <li>Term: ${payment.term.toUpperCase()}</li>
-        </ul>
-        <p>Please correct the issue and resubmit your payment.</p>
-        <br>
-        <p>Best regards,<br>Regina Nostras Schools Administration</p>
-      `,
-    });
+    // Email the student and parent(s); runs in the background
+    notifyPaymentDecision(payment, payment.studentId, { verified: false, reason: rejectionReason });
 
     res.status(200).json({
       success: true,

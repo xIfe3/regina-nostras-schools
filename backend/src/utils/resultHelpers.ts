@@ -2,7 +2,7 @@ import Result from "../models/Result";
 import Student from "../models/Student";
 import { sendEmail } from "./email";
 import { getParentContact } from "./parentAccount";
-import { siteUrl } from "./siteUrl";
+import { resultPublishedEmail } from "./emailTemplates";
 
 /* WAEC-style grading used across the school */
 export const gradeFor = (score: number): string => {
@@ -119,8 +119,6 @@ export const recalculatePositions = async (
   if (ops.length > 0) await Result.bulkWrite(ops);
 };
 
-const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-
 /**
  * Email the student and their parent/guardian that a result has been published.
  * Never throws; returns how many emails were sent.
@@ -132,15 +130,6 @@ export const notifyResultPublished = async (resultId: string): Promise<number> =
     const student = await Student.findById(result.studentId);
     if (!student) return 0;
 
-    const name = `${student.personalInfo.firstName} ${student.personalInfo.lastName}`;
-    const loginUrl = `${siteUrl()}/login`;
-    const details = `
-      <p><strong>Session:</strong> ${result.academicSession} &nbsp; <strong>Term:</strong> ${capitalize(result.term)}</p>
-      <p><strong>Class:</strong> ${result.class}</p>
-      <p><strong>Average:</strong> ${result.summary.averageScore}% &nbsp; <strong>Grade:</strong> ${result.summary.overallGrade}
-      &nbsp; <strong>Position:</strong> ${result.summary.position} of ${result.summary.totalStudents}</p>
-    `;
-
     let sent = 0;
     const studentEmail = student.contactInfo?.email;
     const parentEmail = getParentContact(student)?.email;
@@ -149,15 +138,7 @@ export const notifyResultPublished = async (resultId: string): Promise<number> =
       try {
         await sendEmail({
           to: studentEmail,
-          subject: "New Result Published - Regina Nostras Schools",
-          html: `
-            <h2>New Result Available</h2>
-            <p>Dear ${name},</p>
-            <p>Your result has been published.</p>
-            ${details}
-            <p>Log in to the student portal to see the full result: <a href="${loginUrl}">${loginUrl}</a></p>
-            <br><p>Best regards,<br>Regina Nostras Schools Administration</p>
-          `,
+          ...(await resultPublishedEmail(result, student, "student")),
         });
         sent++;
       } catch (e) {
@@ -169,15 +150,7 @@ export const notifyResultPublished = async (resultId: string): Promise<number> =
       try {
         await sendEmail({
           to: parentEmail,
-          subject: `${student.personalInfo.firstName}'s result is ready - Regina Nostras Schools`,
-          html: `
-            <h2>Result Published</h2>
-            <p>Dear Parent/Guardian,</p>
-            <p>The result for <strong>${name}</strong> (${student.studentId}) has been published.</p>
-            ${details}
-            <p>Log in to the parent portal to see the full result: <a href="${loginUrl}">${loginUrl}</a></p>
-            <br><p>Best regards,<br>Regina Nostras Schools Administration</p>
-          `,
+          ...(await resultPublishedEmail(result, student, "parent")),
         });
         sent++;
       } catch (e) {
