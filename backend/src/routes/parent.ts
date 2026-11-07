@@ -8,7 +8,7 @@ import {
   checkChildPayment,
   submitChildPayment,
 } from "../controllers/parentController.js";
-import { upload } from "../utils/cloudinary.js";
+import { upload } from "../utils/storage.js";
 import { auth, authorize } from "../middleware/auth.js";
 
 const router = express.Router();

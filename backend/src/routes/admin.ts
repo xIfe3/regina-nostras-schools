@@ -20,7 +20,7 @@ import {
   bulkUploadStudents,
 } from "../controllers/adminController.js";
 import { auth, authorize } from "../middleware/auth.js";
-import { upload } from "../utils/cloudinary.js";
+import { upload } from "../utils/storage.js";
 import { localUpload } from "../utils/localUpload.js";
 
 const router = express.Router();

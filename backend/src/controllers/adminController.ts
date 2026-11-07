@@ -8,7 +8,6 @@ import Payment from "../models/Payment";
 import Parent from "../models/Parent";
 import { AuthRequest } from "../middleware/auth";
 import { sendEmail } from "../utils/email";
-import { uploadFile } from "../utils/cloudinary";
 import { ActivityLogger } from "../utils/activityLogger.js";
 import {
   createStudentAccount,

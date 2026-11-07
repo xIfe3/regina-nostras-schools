@@ -2,7 +2,7 @@ import { Response } from "express";
 import Student from "../models/Student.js";
 import User from "../models/User.js";
 import { AuthRequest } from "../middleware/auth.js";
-import { uploadFile } from "../utils/cloudinary.js";
+import { uploadFile } from "../utils/storage.js";
 import bcrypt from "bcryptjs";
 
 // @desc    Get student profile
@@ -119,15 +119,15 @@ export const uploadProfilePhoto = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    // Upload to cloudinary
-    const uploadResult = await uploadFile(req.file, {
+    // Upload to file storage
+    const photoUrl = await uploadFile(req.file, {
       folder: "profile-photos",
     });
 
     // Update student profile
     const student = await Student.findOneAndUpdate(
       { userId: req.user!._id },
-      { "personalInfo.profilePhoto": uploadResult.url },
+      { "personalInfo.profilePhoto": photoUrl },
       { new: true }
     );
 
@@ -142,7 +142,7 @@ export const uploadProfilePhoto = async (req: AuthRequest, res: Response) => {
       success: true,
       message: "Profile photo uploaded successfully",
       data: {
-        profilePhoto: uploadResult.url,
+        profilePhoto: photoUrl,
       },
     });
   } catch (error) {

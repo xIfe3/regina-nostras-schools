@@ -11,7 +11,7 @@ import {
   toggleAnnouncementPin,
 } from "../controllers/announcementController.js";
 import { auth, authorize } from "../middleware/auth.js";
-import { upload } from "../utils/cloudinary.js";
+import { upload } from "../utils/storage.js";
 
 const router = express.Router();
 

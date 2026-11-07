@@ -5,7 +5,7 @@ import User from "../models/User.js";
 import { AuthRequest } from "../middleware/auth.js";
 import { sendEmail } from "../utils/email.js";
 import { ActivityLogger } from "../utils/activityLogger.js";
-import { uploadFile } from "../utils/cloudinary.js";
+import { uploadFile } from "../utils/storage.js";
 
 // @desc    Get all events (for students)
 // @route   GET /api/events/student
@@ -240,7 +240,7 @@ export const createEvent = async (req: AuthRequest, res: Response) => {
       const attachments = [];
       for (const file of req.files) {
         try {
-          const uploadResult = await uploadFile(file.buffer, {
+          const uploadResult = await uploadFile(file, {
             folder: "events",
           });
           attachments.push({
@@ -324,7 +324,7 @@ export const updateEvent = async (req: AuthRequest, res: Response) => {
       const newAttachments = [];
       for (const file of req.files) {
         try {
-          const uploadResult = await uploadFile(file.buffer, {
+          const uploadResult = await uploadFile(file, {
             folder: "events",
           });
           newAttachments.push({

@@ -1,6 +1,6 @@
 import Payment, { IPayment } from "../models/Payment";
 import { normalizeSession, normalizeTerm } from "./fileParser";
-import { uploadFile } from "./cloudinary";
+import { uploadFile, isStorageConfigured } from "./storage";
 
 export const PAYMENT_TYPES = [
   "school_fees",
@@ -102,9 +102,10 @@ export const summarizeExisting = (payment: IPayment, viewer: Viewer) => ({
   message: describeExistingPayment(payment, viewer),
 });
 
-/** Store the receipt: Cloudinary when configured, otherwise inline (local development only). */
+/** Store the receipt in R2 when configured, otherwise inline (local development only). */
 const storeReceipt = async (file: Express.Multer.File) => {
-  if (!process.env.CLOUDINARY_CLOUD_NAME) {
+  if (!isStorageConfigured()) {
+    if (process.env.NODE_ENV === "production") throw new Error("File storage is not configured");
     return `data:${file.mimetype};base64,${file.buffer.toString("base64")}`;
   }
   return uploadFile(file, { folder: "payment-receipts" });

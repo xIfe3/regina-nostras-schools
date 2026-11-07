@@ -6,7 +6,6 @@ import morgan from "morgan";
 import compression from "compression";
 import rateLimit from "express-rate-limit";
 import dotenv from "dotenv";
-import { v2 as cloudinary } from "cloudinary";
 import "express-async-errors";
 
 // Import routes
@@ -131,19 +130,10 @@ const connectDB = async () => {
   }
 };
 
-const cloudinaryConfig = () => {
-  cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET,
-  });
-};
-
 // Start server
 const startServer = async () => {
   try {
     await connectDB();
-    cloudinaryConfig();
     app.listen(PORT, () => {
       console.log(
         `Server running in ${process.env.NODE_ENV} mode on port ${PORT}`

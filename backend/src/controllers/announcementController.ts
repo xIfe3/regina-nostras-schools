@@ -5,7 +5,7 @@ import Student from "../models/Student.js";
 import User from "../models/User.js";
 import { AuthRequest } from "../middleware/auth.js";
 import { ActivityLogger } from "../utils/activityLogger.js";
-import { uploadFile } from "../utils/cloudinary.js";
+import { uploadFile } from "../utils/storage.js";
 import { sendEmail } from "../utils/email.js";
 
 // @desc    Get all announcements (public view)
@@ -260,7 +260,7 @@ export const createAnnouncement = async (req: AuthRequest, res: Response) => {
     // Handle image upload if present
     if (req.file) {
       try {
-        const uploadResult = await uploadFile(req.file.buffer, {
+        const uploadResult = await uploadFile(req.file, {
           folder: "announcements",
         });
         announcementData.imageUrl = uploadResult;
@@ -274,7 +274,7 @@ export const createAnnouncement = async (req: AuthRequest, res: Response) => {
       const attachments = [];
       for (const file of req.files) {
         try {
-          const uploadResult = await uploadFile(file.buffer, {
+          const uploadResult = await uploadFile(file, {
             folder: "announcements/attachments",
           });
           attachments.push({
@@ -365,7 +365,7 @@ export const updateAnnouncement = async (req: AuthRequest, res: Response) => {
     // Handle new image upload if present
     if (req.file) {
       try {
-        const uploadResult = await uploadFile(req.file.buffer, {
+        const uploadResult = await uploadFile(req.file, {
           folder: "announcements",
         });
         updateData.imageUrl = uploadResult;
@@ -379,7 +379,7 @@ export const updateAnnouncement = async (req: AuthRequest, res: Response) => {
       const newAttachments = [];
       for (const file of req.files) {
         try {
-          const uploadResult = await uploadFile(file.buffer, {
+          const uploadResult = await uploadFile(file, {
             folder: "announcements/attachments",
           });
           newAttachments.push({
