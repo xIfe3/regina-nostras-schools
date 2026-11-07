@@ -172,6 +172,7 @@ export interface ParentAccountResult {
   email?: string;
   temporaryPassword?: string;
   emailSent?: boolean;
+  shownOnScreen?: boolean;
   message: string;
 }
 
@@ -571,9 +572,10 @@ export const adminAPI = {
 
   createOrResendParentAccount: (
     id: string,
-    resend = false
+    resend = false,
+    sendEmail = true
   ): Promise<AxiosResponse<ApiResponse<ParentAccountResult>>> =>
-    api.post(`/admin/students/${id}/parent-account`, { resend }),
+    api.post(`/admin/students/${id}/parent-account`, { resend, sendEmail }),
 
   // Results management
   getResults: (params?: {

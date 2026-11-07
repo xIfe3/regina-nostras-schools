@@ -19,6 +19,12 @@ export const getSettings = async (): Promise<ISystemSettings> => {
   return doc!;
 };
 
+/** Load the settings straight from the database (no cache). Use this before saving. */
+export const getSettingsFresh = async (): Promise<ISystemSettings> => {
+  clearSettingsCache();
+  return getSettings();
+};
+
 export const clearSettingsCache = () => {
   cache = null;
 };

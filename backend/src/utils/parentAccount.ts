@@ -23,6 +23,8 @@ export interface ParentLinkResult {
   email?: string;
   temporaryPassword?: string;
   emailSent?: boolean;
+  /** true when the admin chose to see the password on screen instead of emailing it */
+  shownOnScreen?: boolean;
   message: string;
 }
 
@@ -118,7 +120,11 @@ const sendChildLinkedEmail = async (
  */
 export const syncParentAccount = async (
   student: IStudent,
-  options: { resendCredentials?: boolean } = {}
+  options: {
+    resendCredentials?: boolean;
+    /** false = don't email the password; the admin shares it in person */
+    sendEmail?: boolean;
+  } = {}
 ): Promise<ParentLinkResult> => {
   const contact = getParentContact(student);
 
@@ -166,6 +172,16 @@ export const syncParentAccount = async (
       { $pull: { children: student._id } }
     );
 
+    if (options.sendEmail === false) {
+      return {
+        status: "created",
+        email: contact.email,
+        temporaryPassword: password,
+        emailSent: false,
+        shownOnScreen: true,
+        message: `Parent login created for ${contact.email}. Give the password to the parent.`,
+      };
+    }
     const emailSent = await sendCredentialsEmail(
       contact.email,
       contact.name,
@@ -214,6 +230,16 @@ export const syncParentAccount = async (
     user.password = password;
     user.isActive = true;
     await user.save();
+    if (options.sendEmail === false) {
+      return {
+        status: "credentials_resent",
+        email: contact.email,
+        temporaryPassword: password,
+        emailSent: false,
+        shownOnScreen: true,
+        message: `New password created for ${contact.email}. Give it to the parent. The old password no longer works.`,
+      };
+    }
     const emailSent = await sendCredentialsEmail(
       contact.email,
       parent.name,

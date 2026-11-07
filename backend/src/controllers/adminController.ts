@@ -480,6 +480,7 @@ export const createOrResendParentAccount = async (
 
     const result = await syncParentAccount(student, {
       resendCredentials: req.body?.resend === true,
+      sendEmail: req.body?.sendEmail !== false,
     });
 
     const ok = result.status !== "no_email" && result.status !== "email_in_use";

@@ -1,6 +1,6 @@
 import { Response } from "express";
 import { AuthRequest } from "../middleware/auth";
-import { getSettings, clearSettingsCache } from "../utils/settings";
+import { getSettings, getSettingsFresh, clearSettingsCache } from "../utils/settings";
 import { ActivityLogger } from "../utils/activityLogger.js";
 
 const MAX_IMAGE_BYTES = 1024 * 1024; // 1MB per image
@@ -103,7 +103,8 @@ export const updateSettings = async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ success: false, message: "School name cannot be empty" });
     }
 
-    const s = await getSettings();
+    // Always edit a fresh copy so a cached one can't overwrite newer changes
+    const s = await getSettingsFresh();
     const before = { ...s.toObject().access };
 
     if (Object.keys(school).length) s.set("school", { ...s.toObject().school, ...school });
